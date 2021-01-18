@@ -1,0 +1,177 @@
+---
+title: "Fish and health with national fish promotion programme"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
+---
+
+This is an open assessment looking at potential health effects of a national fish promotion program in Finland. The details of the assessment are described at [Opasnet](http://fi.opasnet.org/fi/PFAS-yhdisteiden tautitaakka). This file contains the R code to run the assessment model.
+
+Knit to html for best performance.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) 
+```
+
+Calculation is based on BONUS GOHERR project and its [http://en.opasnet.org/w/Goherr_assessment](fish health benefit-risk assessment).
+
+```{r downloads}
+# This code was forked from code Op_fi5923/model on page [[Kotimaisen kalan edistämisohjelma]]
+# The code was forked from Op_fi5889/model on page [[Ruori]] and Op_en7748/model on page [[Goherr assessment]]
+library(OpasnetUtils) # Install the newest version from https://github.com/jtuomist/OpasnetUtils not from CRAN.
+library(ggplot2)
+library(plotly)
+# First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
+oempty(all=TRUE)
+openv.setN(10)
+dat <- opbase.data("Op_fi5923", subset="Malliparametrit")[-1]
+dec <- opbase.data("Op_fi5923", subset="Decisions")[-1]
+DecisionTableParser(dec)
+CTable <- opbase.data("Op_fi5923",subset="CollapseMarginals")
+for(i in 1:ncol(CTable)) {CTable[[i]] <- as.character(CTable[[i]])}
+CollapseTableParser(CTable)
+objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping
+cat("Laskennassa käytetty data.\n")
+dat
+cat("Tarkastellut päätökset.\n")
+dec
+cat("Aggregoidut marginaalit.\n")
+CTable
+#' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/initiate on page [[Exposure-response function]]
+#' @param dat data.frame
+#' @param type type of data that is used. Must match content in column Type
+#' @param drop columns to remove
+#' @return data.frame
+prepare <- function(dat, type=NULL, drop=NULL) {
+  out <- dat
+  if(!is.null(type)) out <- out[out$Type %in% type , ]
+  if(!is.null(drop)) out <- out[!colnames(out) %in% drop]
+  return(subgrouping(out))
+}
+amount <- Ovariable("amount", data = prepare(dat, "amount", c("Type","Response","Exposure_agent"))) # Filleted weight, i.e. no loss.
+# Exposure:To child and To eater not needed, because dioxins are not (yet) included
+
+conc_vit <- Ovariable(
+  "conc_vit",
+  ddata = "Op_en1838",
+  subset = "Fineli data for common fish species"
+)
+#  dependencies = data.frame(Name="dummy"),
+#  formula = function(...) {
+#    df = opbase.data(
+#      "Op_en1838", # [[Concentrations of beneficial nutrients in fish#Fineli]]
+#      subset = "Fineli data for common fish species"
+#    )
+  df = conc_vit@data
+  df$Nutrient[df$Nutrient=="D-vitamiini (µg)"] <- "Vitamin D"
+  df$Nutrient[df$Nutrient=="rasvahapot n-3 moni-tyydyttymättömät (g)"] <- "Omega3"
+  df$Nutrient[df$Nutrient=="rasvahappo 18:3 n-3 (alfalinoleenihappo) (mg)"] <- "ALA"
+  df$Nutrient[df$Nutrient=="rasvahappo 22:6 n-3 (DHA) (mg)"] <- "DHA"
+  df$Nutrient[df$Nutrient=="proteiini (g)"] <- "Fish"
+  df$conc_vitResult[df$Nutrient=="Fish"] <- "1"
+  df <- dropall(df[df$Nutrient %in% c("Vitamin D", "Omega3", "ALA", "DHA", "Fish") , ])
+#  return(df)
+#  }
+#)
+conc_vit@data <- df
+
+exposure <- Ovariable(
+  "exposure",
+  dependencies = data.frame(Name=c("conc_vit", "amount")),
+  formula = function(...) {
+    
+    # First, match KKE-classification with Fineli classification
+    
+    conc_vit$Kala <- NULL
+    tmp <- Ovariable(
+      output = data.frame(
+        Kala = c("Kasvatettu", "Kaupallinen", "Kirjolohi", "Silakka", "Vapaa-ajan", "Muu tuonti", "Tuontikirjolohi", "Tuontilohi"),
+        Fish = c("Whitefish", "Average fish","Rainbow trout", "Herring", "Average fish", "Average fish", "Rainbow trout", "Salmon"),
+        Result = 1
+      ))
+      
+    amount <- amount * 1000 / 5.52 /365.25 # M kg/a per 5.52M population --> g/d per person.
+    out <- conc_vit * tmp * amount
+    colnames(out@output)[colnames(out@output)=="Nutrient"] <- "Exposure_agent"
+      
+    return(out)
+  },
+  marginal = c(TRUE, TRUE, FALSE)
+)
+# Incidence-based data not needed
+frexposed <- 1
+population <- 0
+incidence <- 0
+ERFChoice <- Ovariable(
+  "ERFchoice",
+  data=data.frame(
+    Response=c("Loss in child's IQ points","CHD2 mortality","Breast cancer","All-cause mortality","Depression"),
+    Exposure_agent=c("DHA","Omega3","Omega3","Fish","Fish"),
+    Result=1)
+)
+case_burden <- Ovariable("case_burden", data= prepare(dat,"case burden",c("Type","Exposure_agent","Unit")))
+objects.latest("Op_en5917", code_name="InpBoD") # [[Disease risk]] InpBoD for GOHERR
+InpBoD <- EvalOutput(InpBoD) # Evaluated because is not a dependency but an Input
+InpBoD <- InpBoD[InpBoD$Country=="FI",colnames(InpBoD@output)!="Country"]
+objects.latest("Op_en2261",code_name="BoDattr2") # [[Health impact assessment]]
+```
+
+```{r modelrun}
+tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
+```
+
+
+```{r plots}
+###################
+# Graphs
+trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
+plot_ly(trim(amount), x=~Scenario, y=~amountResult, color=~Kala, type="bar") %>%
+  layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
+plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
+  layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
+tmp <- exposure / Ovariable(
+  output = data.frame(
+    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA"),
+    Result = c(1, 1, 1000, 1000, 1000)
+  ), marginal = c(TRUE, FALSE)
+)
+plot_ly(trim(tmp), x=~Scenario, y=~Result, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+  layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
+summary(conc_vit, "mean")
+summary(exposure,"mean")
+summary(amount,"mean")
+summary(BoD,"mean")
+summary(BoDattr,"mean")
+cat("Kalaperäisiä tautitaakkoja Suomessa\n")
+tmp <- summary(oapply(BoDattr,NULL,sum,"Group")[BoDattr$Scenario=="BAU",])
+data.frame(
+  Altiste = tmp$Exposure_agent,
+  Vaikutus = tmp$Response,
+  Keskiarvo = as.character(signif(tmp$mean,2)),
+  "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+  Keskihajonta = signif(tmp$sd,2)
+)#[rev(match(lev, tmp$Exposure_agent)),]
+ggplot(trim(BoDattr), aes(x=Scenario, weight=BoDattrResult, fill=Response))+geom_bar()
+ggplot(trim(BoDattr), aes(x=Scenario, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
+plot_ly(trim(BoDattr), x=~Scenario, y=~BoDattrResult, color=~Response, text=~paste(Group, Exposure_agent, sep=": "), type="bar") %>%
+  layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
+tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Exposure_agent")))
+data.frame(
+  Altiste = tmp$Response,
+  Keskiarvo = signif(tmp$mean,2),
+  "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+  Keskihajonta = signif(tmp$sd,2)
+)
+################ Insight network
+gr <- scrape(type="assessment")
+objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
+gr <- makeGraph(gr)
+#export_graph(gr, "ruori.svg")
+render_graph(gr)
+##################### Diagnostics
+objects.latest("Op_en6007", code_name="diagnostics")
+showLoctable()
+showind()
+```
