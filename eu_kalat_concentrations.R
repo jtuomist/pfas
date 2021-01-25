@@ -9,12 +9,17 @@ colnames(df) <- c("Code","Matrix","POP","Species","Site","Location","Date","N","
 for(i in 8:14) df[[i]] <- as.numeric(df[[i]])
 df$Code <- gsub("(M|L)", "", df$Code)
 df$Result <- df$Result / 1000 # pg/g f.w --> ng/g f.w.
+df$Result[df$Result==0] <- "<0.15" # Level of quantitation
 
-ggplot(df, aes(x=Species, y = Result, colour=Matrix, shape=Location))+geom_point()+
+openv.setN(1) # Only one random value as sample
+df <- EvalOutput(Ovariable("df",data=df))@output
+colnames(df)[colnames(df)=="dfResult"] <- "Result"
+
+ggplot(df, aes(x=Species, y = Result, colour=Location, shape=Matrix))+geom_point()+
   coord_flip()+scale_y_log10()+
   facet_grid(~POP, scales="free_x")+
   labs(
-    title="PFAS concentrations in Finnish fishes",
+    title="PFAS concentrations in fish in Finland",
     y = "PFAS concentration (ng/g fresh weight)"
   )
 
@@ -39,13 +44,17 @@ v2 <- EvalOutput(Ovariable("v2", data=df[df$Matrix=="Liver", c(1,3,4,6,14)]))
 tmp <- v2/v1
 
 # It seems that
-# 1) Vanhankaupunginlahti seems to be badly polluted, but otherwise minor differences 
+# 1) Vanhankaupunginlahti in Helsinki seems to be badly polluted, but otherwise minor differences 
 #    between places and species in PFOS concentrations. There is some kind of interaction,
 #    because pike-perch muscle show similar concentration in Vanhankaupunginlahti and elsewhere,
 #    while in perch that place is much more polluted with PFOA, and this is the case with liver as well.
 # 2) The liver concentrations seem to be 3 - 30 times higher than in muscle within the same
 #    pooled sample. However, there are liver data only about three species: salmon, perch,
 #    and burbot. Therefore, liver brings little added value and are not considered later.
+
+tmp <- v1[v1$Location=="Helsinki, Vanhankaupunginlahti Bay" & v1$POP=="PFOS",]
+tmp$Iter <- 1:nrow(tmp@output)
+summary(tmp, marginals="POP")
 
 v1 <- v1[v1$Location != "Helsinki, Vanhankaupunginlahti Bay",]
 
