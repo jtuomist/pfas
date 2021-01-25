@@ -23,11 +23,11 @@ What needs to be done for PFAS assessment?
 2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
 3. Infant's dioxin concentration module must be added. Solution: Use Goherr model for expo_indir DONE
 4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution.
-4. Find why expo_indir is so much higher than EFSA toxicokinetic assessment.
-5. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity.
-6. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started.
-7. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make Inpconc.
-
+5. Find why expo_indir is so much higher than EFSA toxicokinetic assessment.
+6. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity.
+7. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started.
+8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
+9. Add dioxin and MeHg concentrations. Later.
 
 ```{r downloads}
 # This code was forked from https://github.com/jtuomist/fishhealth/blob/master/fishhealth.Rmd
@@ -335,14 +335,13 @@ expo_dir <- Ovariable(
 )
 
 expo_dir <- EvalOutput(expo_dir)
-View(expo_dir@output)
+#View(expo_dir@output)
+
 ggplot(oapply(expo_dir, cols=c("Iter"),FUN=mean)@output,
        aes(x=Age, weight=expo_dirResult,fill=Fish))+geom_bar()+
   facet_wrap(~Compound, scales="free_y")+
   labs(title="Eri yhdisteiden saanti kalasta")
 ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
-
-#objects.latest("Op_en7797", code_name="expo_indir2") # [[Infant's dioxin exposure]] expo_indir, t0.5, f_ing, f_mtoc, BF
 
 exposure <- Ovariable(
   "exposure",
