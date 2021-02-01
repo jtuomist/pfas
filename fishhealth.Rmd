@@ -71,7 +71,26 @@ What needs to be done for PFAS assessment?
 8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
 9. Add dioxin and MeHg concentrations. Later.
 10. Now that the model runs technically, look through each part to check that it makes sense.
+11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Add RRorig to compensate for this.
 
+```{r case-specific adjustments}
+
+objects.latest("Op_en2261", code_name="RR2") # RR on page [[Health impact assessment]]
+
+RRorig <- RR@formula
+
+RR@formula <- function(...) {
+  out <- RRorig()
+  out <- out * Ovariable(output=data.frame(Age=c(
+    "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
+    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+"),
+    Result=1),
+    marginal=c(TRUE,FALSE)
+  )
+  return(out)
+}
+
+```
 
 ```{r downloads}
 # This code was forked from https://github.com/jtuomist/fishhealth/blob/master/fishhealth.Rmd
