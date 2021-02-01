@@ -13,26 +13,6 @@ Knit to html for best performance.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE) 
-```
-
-Calculation is based on BONUS GOHERR project and its [http://en.opasnet.org/w/Goherr_assessment](fish health benefit-risk assessment).
-
-What needs to be done for PFAS assessment?
-
-1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE
-2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
-3. Infant's dioxin concentration module must be added. Solution: Use Goherr model for expo_indir DONE
-4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution.
-5. Find why expo_indir is so much higher than EFSA toxicokinetic assessment.
-6. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity.
-7. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started.
-8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
-9. Add dioxin and MeHg concentrations. Later.
-
-```{r downloads}
-# This code was forked from https://github.com/jtuomist/fishhealth/blob/master/fishhealth.Rmd
-# This code was previously forked from code Op_fi5923/model on page [[Kotimaisen kalan edistämisohjelma]]
-# The code was even more previously forked from Op_fi5889/model on page [[Ruori]] and Op_en7748/model on page [[Goherr assessment]]
 
 library(OpasnetUtils) # Install the newest version from https://github.com/jtuomist/OpasnetUtils not from CRAN.
 library(tidyverse)
@@ -40,26 +20,11 @@ library(plotly)
 
 # First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
 oempty(all=TRUE)
-openv.setN(10)
-
-dat <- opbase.data("Op_fi5932", subset="Malliparametrit")[-1] # [[PFAS-yhdeisteiden tautitaakka]]
-dec <- opbase.data("Op_fi5932", subset="Decisions")[-1]
-DecisionTableParser(dec)
-
-CTable <- opbase.data("Op_fi5932",subset="CollapseMarginals")
-for(i in 1:ncol(CTable)) {CTable[[i]] <- as.character(CTable[[i]])}
-CollapseTableParser(CTable)
+openv.setN(0)
 
 objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping
 
-cat("Laskennassa käytetty data.\n")
-dat
-cat("Tarkastellut päätökset.\n")
-dec
-cat("Aggregoidut marginaalit.\n")
-CTable
-
-#' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/initiate on page [[Exposure-response function]]
+#' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/subgrouping on page [[Exposure-response function]]
 #' @param dat data.frame
 #' @param type type of data that is used. Must match content in column Type
 #' @param drop columns to remove
@@ -71,7 +36,64 @@ prepare <- function(dat, type=NULL, drop=NULL) {
   return(subgrouping(out))
 }
 
-dummy <- Ovariable("summy",data=data.frame(Age="dummy", Result=1))
+#' Copies results from one location to other locations while keeping everything else constant
+#' @param ova ovariable to be used
+#' @param locations list of relevant indices. Each item is a list that has a name of an existing locations, and the content is a vector of new location names.
+#' @return the input ovariable with new rows containing the new locations
+
+expand_index <- function(ova, locations) {
+  out <- ova
+  for(i in names(locations)) {
+    for(j in names(locations[[i]])) {
+      addpiece <- ova[ova@output[i]==j,]
+      for(k in locations[[i]][[j]]) {
+        addpiece@output[[i]] <- k
+        out <- OpasnetUtils::combine(out,addpiece)
+      }
+    }
+  }
+  return(out)
+}
+
+```
+
+Calculation is based on BONUS GOHERR project and its [http://en.opasnet.org/w/Goherr_assessment](fish health benefit-risk assessment).
+
+What needs to be done for PFAS assessment?
+
+1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE
+2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
+3. Infant's dioxin concentration module must be added. Solution: Use Goherr model for expo_indir DONE
+4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution.
+5. Find why expo_indir is so much higher than EFSA toxicokinetic assessment. Make an alternative model.
+6. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity. DONE
+7. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started. DONE
+8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
+9. Add dioxin and MeHg concentrations. Later.
+10. Now that the model runs technically, look through each part to check that it makes sense.
+
+
+```{r downloads}
+# This code was forked from https://github.com/jtuomist/fishhealth/blob/master/fishhealth.Rmd
+# This code was previously forked from code Op_fi5923/model on page [[Kotimaisen kalan edistämisohjelma]]
+# The code was even more previously forked from Op_fi5889/model on page [[Ruori]] and Op_en7748/model on page [[Goherr assessment]]
+
+dat <- opbase.data("Op_fi5932", subset="Malliparametrit")[-1] # [[PFAS-yhdeisteiden tautitaakka]]
+dec <- opbase.data("Op_fi5932", subset="Decisions")[-1]
+DecisionTableParser(dec)
+
+CTable <- opbase.data("Op_fi5932",subset="CollapseMarginals")
+#for(i in 1:ncol(CTable)) {CTable[[i]] <- as.character(CTable[[i]])} # The default is currently character, not factor
+CollapseTableParser(CTable)
+
+cat("Laskennassa käytetty data.\n")
+dat
+cat("Tarkastellut päätökset.\n")
+dec
+cat("Aggregoidut marginaalit.\n")
+CTable
+
+dummy <- Ovariable("dummy",data=data.frame(Age="dummy", Result=1))
 
 fish_proportion <- Ovariable( # How age groups eat fish differently
   "fish_proportion",
@@ -125,13 +147,41 @@ population <- Ovariable(
   "population",
   data = prepare(dat,"population",c("Type","Exposure_agent","Response","Unit")),
   unit="#")
-#exposure <- Ovariable("exposure", data = prepare(dat, "exposure", c("Type","Response")))
-#frexposed <- Ovariable("frexposed", data=prepare(dat, "frexposed", c("Type","Response","Unit")))
+
+population <- Ovariable(
+  "population", 
+  data=prepare(dat, "population", c("Type", "Exposure_agent", "Response","Unit")),
+  unit = "#"
+)
 
 incidence <- Ovariable(
   "incidence",
   data = prepare(dat,"incidence",c("Type","Exposure_agent","Unit")),
   unit="1/person-year")
+#incidence@data$Age[is.na(incidence@data$Age)] <- ""
+
+case_burden <- Ovariable(
+  "case_burden",
+  data = prepare(dat,"case burden",c("Type", "Exposure_agent","Unit")),
+  unit="DALY/case")
+
+ERFchoice <- Ovariable(
+  "ERFchoice",
+  data = 
+    prepare(dat, "ERFchoice", c("Unit", "Type"))
+)
+
+InpBoD <- EvalOutput(Ovariable( # Evaluated because is not a dependency but an Input
+  "InpBoD",
+  data = prepare(dat, "BoD", c("Type","Exposure_agent","Unit")),
+  unit="DALY/a"
+))
+InpBoD$Response[InpBoD$Response=="All causes"] <- "All-cause mortality"
+InpBoD$Response[InpBoD$Response=="Depressive disorders"] <- "Depression"
+InpBoD$Response[InpBoD$Response=="Neoplasms"] <- "Cancer morbidity"
+InpBoD$Response[InpBoD$Response=="Respiratory infections and tuberculosis"] <- "Immunosuppression" # Infections of 0-9-year-olds are assumed to represent the background BoD of immunosuppressive effect of PFAS
+InpBoD$Response[InpBoD$Response=="Cardiovascular diseases"] <- "CHD2 mortality"
+
 
 ```
 
@@ -225,7 +275,7 @@ ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
 # Code copied from http://en.opasnet.org/w/Goherr_assessment#
 
 mc2dparam<- list(
-  N2 = 1000, # Number of iterations in the new Iter
+  N2 = 10, # Number of iterations in the new Iter
   strength = 50, # Sample size to which the fun is to be applied. Resembles number of observations
   run2d = FALSE, # Should the mc2d function be used or not?
   info = 1, # Ovariable that contains additional indices, e.g. newmarginals.
@@ -366,6 +416,8 @@ exposure <- Ovariable(
   unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 )
 
+exposure <- Ovariable("exposure", data=data.frame(Result=1))
+if(FALSE) {
 exposure <- EvalOutput(exposure)
 View(exposure@output)
 
@@ -375,38 +427,29 @@ ggplot(exposure@output, aes(x=Age, weight=exposureResult, fill=Fish))+geom_bar()
     title="Exposure to compounds",
     y="(omega: mg/d; vit D: ug/d, PFAS: ng/d)"
   )
+} # END IF
 
-InpERF <- Ovariable(
-  "InpERF",
-  data = prepare(dat,"InpERF",c("Unit")),
-  unit="ng/kg/wk")
-InpERF <- EvalOutput(InpERF)
-
-Inpcase_burden <- Ovariable(
-  "Inpcase_burden",
-  data = prepare(dat,"Inpcase_burden",c("Exposure_agent","Unit")),
-  unit="DALY/case")
-Inpcase_burden <- EvalOutput(Inpcase_burden)
-
-# Incidence-based data not needed
-frexposed <- 1
-incidence <- 1
-ERFchoice <- Ovariable(
-  "ERFchoice",
-  data=data.frame(
-    Response=c("Loss in child's IQ points","CHD2 mortality","Breast cancer","All-cause mortality","Depression","Immunosuppression"),
-    Exposure_agent=c("DHA","Omega3","Omega3","Fish","Fish","PFAS"),
-    Result=1)
-)
-case_burden <- Ovariable("case_burden", data= prepare(dat,"case burden",c("Type","Exposure_agent","Unit")))
-objects.latest("Op_en5917", code_name="InpBoD") # [[Disease risk]] InpBoD for GOHERR
-InpBoD <- EvalOutput(InpBoD) # Evaluated because is not a dependency but an Input
-InpBoD <- InpBoD[InpBoD$Country=="FI",colnames(InpBoD@output)!="Country"]
 ```
 
 ```{r modelrun}
 objects.latest("Op_en2261",code_name="BoDattr2") # [[Health impact assessment]]
 tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
+
+oprint(summary(amount,"mean"))
+oprint(summary(BoD,"mean"))
+oprint(summary(BoDattr,"mean"))
+oprint(summary(case_burden,"mean"))
+oprint(summary(conc,"mean"))
+oprint(summary(dose,"mean"))
+oprint(summary(ERF,"mean"))
+oprint(summary(expo_dir,"mean"))
+#oprint(summary(exposure,"mean"))
+oprint(summary(fish_proportion,"mean"))
+oprint(summary(incidence,"mean"))
+oprint(summary(PAF,"mean"))
+oprint(summary(population,"mean"))
+oprint(summary(RR,"mean"))
+
 ```
 
 
@@ -414,51 +457,64 @@ tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
 ###################
 # Graphs
 trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
+
 plot_ly(trim(amount), x=~Scenario, y=~amountResult, color=~Kala, type="bar") %>%
   layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
+
 plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
   layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
+
 tmp <- exposure / Ovariable(
   output = data.frame(
-    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA"),
-    Result = c(1, 1, 1000, 1000, 1000)
-  ), marginal = c(TRUE, FALSE)
+    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA", "TEQ", "PFAS"),
+    Result = c(1, 1, 1000, 1000, 1000, 1, 1)
+  ),
+  marginal = c(TRUE, FALSE)
 )
-plot_ly(trim(tmp), x=~Scenario, y=~Result, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+
+plot_ly(trim(tmp), x=~exposureSource, y=~Result, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
   layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
-summary(conc_vit, "mean")
-summary(exposure,"mean")
-summary(amount,"mean")
-summary(BoD,"mean")
-summary(BoDattr,"mean")
+
 cat("Kalaperäisiä tautitaakkoja Suomessa\n")
-tmp <- summary(oapply(BoDattr,NULL,sum,"Group")[BoDattr$Scenario=="BAU",])
-data.frame(
-  Altiste = tmp$Exposure_agent,
-  Vaikutus = tmp$Response,
-  Keskiarvo = as.character(signif(tmp$mean,2)),
-  "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
-  Keskihajonta = signif(tmp$sd,2)
-)#[rev(match(lev, tmp$Exposure_agent)),]
-ggplot(trim(BoDattr), aes(x=Scenario, weight=BoDattrResult, fill=Response))+geom_bar()
-ggplot(trim(BoDattr), aes(x=Scenario, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
-plot_ly(trim(BoDattr), x=~Scenario, y=~BoDattrResult, color=~Response, text=~paste(Group, Exposure_agent, sep=": "), type="bar") %>%
+
+if(openv$N>1) {
+  tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Response")))
+  tmp <- data.frame(
+    Altiste = tmp$Exposure_agent,
+    Vaikutus = tmp$Response,
+    Keskiarvo = as.character(signif(tmp$mean,2)),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )#[rev(match(lev, tmp$Exposure_agent)),]
+
+  oprint(tmp)
+  
+  tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Exposure_agent")))
+  tmp <- data.frame(
+    Terveysvaikutus = tmp$Response,
+    Keskiarvo = signif(tmp$mean,2),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )
+  oprint(tmp)
+}
+
+ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()
+
+ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
+
+plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
   layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
-tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Exposure_agent")))
-data.frame(
-  Altiste = tmp$Response,
-  Keskiarvo = signif(tmp$mean,2),
-  "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
-  Keskihajonta = signif(tmp$sd,2)
-)
+
 ################ Insight network
 gr <- scrape(type="assessment")
 objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
 gr <- makeGraph(gr)
 #export_graph(gr, "ruori.svg")
-render_graph(gr)
+#render_graph(gr) # Does not work: Error in generate_dot(graph) : object 'attribute' not found
 ##################### Diagnostics
 objects.latest("Op_en6007", code_name="diagnostics")
 showLoctable()
 showind()
+
 ```
