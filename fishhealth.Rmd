@@ -42,17 +42,18 @@ prepare <- function(dat, type=NULL, drop=NULL) {
 #' @return the input ovariable with new rows containing the new locations
 
 expand_index <- function(ova, locations) {
-  out <- ova
+  if("ovariable" %in% class(ova)) out <- ova@output else out <- ova
   for(i in names(locations)) {
     for(j in names(locations[[i]])) {
-      addpiece <- ova[ova@output[i]==j,]
+      addpiece <- out[out[[i]]==j,]
       for(k in locations[[i]][[j]]) {
-        addpiece@output[[i]] <- k
-        out <- OpasnetUtils::combine(out,addpiece)
+        addpiece[[i]] <- k
+        out <- rbind(out,addpiece)
       }
     }
   }
-  return(out)
+  if("ovariable" %in% class(ova)) ova@output <- out else ova <- out
+  return(ova)
 }
 
 ```
@@ -71,7 +72,9 @@ What needs to be done for PFAS assessment?
 8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
 9. Add dioxin and MeHg concentrations. Later.
 10. Now that the model runs technically, look through each part to check that it makes sense.
-11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Add RRorig to compensate for this.
+11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Add RRorig to compensate for this. DONE
+12. TEQ and MeHg are missing from dose. Check why and correct.
+
 
 ```{r case-specific adjustments}
 
@@ -112,24 +115,23 @@ dec
 cat("Aggregoidut marginaalit.\n")
 CTable
 
-dummy <- Ovariable("dummy",data=data.frame(Age="dummy", Result=1))
+dummy <- Ovariable("dummy",data=data.frame(Age="dummy", Fish="dummy", Compound="dummy", Area="dummy", Result=1)) # Keep these columns marginals
 
-fish_proportion <- Ovariable( # How age groups eat fish differently
+fish_proportion <- Ovariable( # How population subgroups eat fish differently
   "fish_proportion",
-  dependencies = data.frame(Name="dummy"),
-  formula = function(...) {
-    out = prepare(dat,"fish_proportion",c("Type","Exposure_agent","Response","Unit"))
-    out$Result <- as.numeric(as.character(out$Result))
-    out$Result <- out$Result / sum(out$Result) * length(out$Result)
-    return(out)
-  },
-  unit="-")
+  data = data.frame(prepare(dat,"fish proportion",c("Type","Exposure_agent","Response","Unit"))),
+  unit="proportion of the mean")
+
+total_amount <- Ovariable(
+  "total_amount",
+  data=prepare(dat, "amount", c("Type","Response","Exposure_agent","Unit")),
+  unit="M kg/a")
 
 amount <- Ovariable(
   "amount",
-  dependencies = data.frame(Name="fish_proportion"),
+  dependencies = data.frame(Name=c("total_amount", "fish_proportion")),
   formula = function(...) {
-    amount = Ovariable("total_amount", data=prepare(dat, "amount", c("Type","Response","Exposure_agent","Unit")))
+    amount <- total_amount
       # Filleted weight, i.e. no loss.
     amount <- amount * 1000 / 5.52 /365.25 
       # M kg/a per 5.52M population --> g/d per average person.
@@ -153,19 +155,6 @@ amount <- Ovariable(
   unit="g/d"
 )
 # Exposure:To child and To eater not needed, because dioxins are not (yet) included
-
-amount <- EvalOutput(amount)
-ggplot(amount@output, aes(x=Age, weight=amountResult, fill=Kala))+geom_bar()+
-  labs(
-    title="Kalansyönti Suomessa ikäryhmittäin",
-    y="Syönti (g/d)"
-  )
-ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
-
-population <- Ovariable(
-  "population",
-  data = prepare(dat,"population",c("Type","Exposure_agent","Response","Unit")),
-  unit="#")
 
 population <- Ovariable(
   "population", 
@@ -201,7 +190,6 @@ InpBoD$Response[InpBoD$Response=="Neoplasms"] <- "Cancer morbidity"
 InpBoD$Response[InpBoD$Response=="Respiratory infections and tuberculosis"] <- "Immunosuppression" # Infections of 0-9-year-olds are assumed to represent the background BoD of immunosuppressive effect of PFAS
 InpBoD$Response[InpBoD$Response=="Cardiovascular diseases"] <- "CHD2 mortality"
 
-
 ```
 
 ```{r concentrations}
@@ -209,7 +197,8 @@ InpBoD$Response[InpBoD$Response=="Cardiovascular diseases"] <- "CHD2 mortality"
 conc_vit <- Ovariable(
   "conc_vit",
   ddata = "Op_en1838", # [[Concentrations of beneficial nutrients in fish]]
-  subset = "Fineli data for common fish species"
+  subset = "Fineli data for common fish species",
+  unit="ALA mg/g, DHA mg/g, Fish g/g, Omega3 mg/g, Vitamin D µg/g f.w. after adjustment"
 )
   df = conc_vit@data
   df$Nutrient[df$Nutrient=="D-vitamiini (µg)"] <- "Vitamin D"
@@ -240,36 +229,37 @@ conc_eukalat <- EvalOutput(Ovariable(
   unit="ng/g fresh weight"
 ))
 
+conc_pfas_raw <- Ovariable(
+  "conc_pfas_raw",
+  ddata="Op_fi5932",subset="PFAS concentrations",
+  unit="ng/g f.w.")
+
 conc_pfas <- Ovariable(
   "conc_pfas",
-  data=opbase.data("Op_fi5932",subset="PFAS concentrations"),
-  unit="ng/g fresh weight")
-conc_pfas@data$Area <- "Porvoo"
-conc_pfas <- EvalOutput(conc_pfas)
+  dependencies = data.frame(Name="conc_pfas_raw"),
+  formula = function(...) {
+    out <- conc_pfas_raw
+    out$Source <- NULL
+    out$Area <- "Porvoo"
+    out <- expand_index(out, list(Fish=list(Perch=c(
+      "Average fish", "Pike","Rainbow trout","Roach", "Salmon", "Vendace", "Whitefish"))))
+    out@marginal <- c(TRUE, TRUE, FALSE, TRUE, TRUE)
+    return(out)
+  },
+  unit="ng/g fresh weight"
+)
 
-ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+stat_ecdf()+
-  scale_x_log10()+
-  stat_ecdf(data=conc_eukalat@output, aes(x=conc_eukalatResult))+
-  scale_linetype_manual(values=c("dotted","solid","twodash"))+
-  labs(
-    title="PFAS concentration in fishes in Finland",
-    x="PFAS concentration (ng/g fresh weight)",
-    y="Cumulative probability"
-  )
-# The code may produce some negative values, which are removed from the graph
-ggsave("PFAS-pitoisuus kalassa Suomessa.svg")
-
-sum_pfas <- oapply(conc_pfas, cols=c("Kala","Compound"), FUN=sum)
-tmp <- conc_pfas / sum_pfas
-summary(tmp, marginals="Compound")
-
+#sum_pfas <- oapply(conc_pfas, cols=c("Kala","Compound"), FUN=sum)
+#tmp <- conc_pfas / sum_pfas
+#summary(tmp, marginals="Compound")
+#
 ## This tells that PFOS consists of 71 - 97 % of the four key PFAS, while PFOA, PFNA, and PFHxS consist of 
 # 0 - 10 %, 2 - 18 %, and 0 - 9 %, respectively.
 # Even if we included the next most abundant congeners, i.e. PFDA and PFUnA, the overall picture would not change.
 
 conc <- Ovariable(
   "conc",
-  dependencies = data.frame(Name="conc_vit", "conc_pfas"),
+  dependencies = data.frame(Name=c("conc_vit", "conc_pfas")),
   formula = function(...){
     conc_vit <- oapply(conc_vit, cols=c("Kala", "Adjust"),FUN=mean)
     colnames(conc_vit@output)[colnames(conc_vit@output)=="Nutrient"] <- "Compound"
@@ -282,10 +272,6 @@ conc <- Ovariable(
     return(out)
   }
 )
-conc <- EvalOutput(conc)
-
-ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
-  facet_wrap(~Compound, scales="free_x")
 
 ```
 
@@ -298,7 +284,7 @@ mc2dparam<- list(
   strength = 50, # Sample size to which the fun is to be applied. Resembles number of observations
   run2d = FALSE, # Should the mc2d function be used or not?
   info = 1, # Ovariable that contains additional indices, e.g. newmarginals.
-  newmarginals = c("Group","Exposure"), # Names of columns that are non-marginals but should be sampled enough to become marginals
+  newmarginals = c("Exposure"), # Names of columns that are non-marginals but should be sampled enough to become marginals
   method = "bootstrap", # which method to use for 2D Monte Carlo? Currently bootsrap is the only option.
   fun = mean # Function for aggregating the first Iter dimension.
 )
@@ -359,7 +345,7 @@ expo_bg <- Ovariable(
     temp2 <- oapply(temp2, cols = "Exposure_agent", FUN = sum)
     temp2$Exposure_agent <- "Omega3"
     
-    out <- combine(out, temp1, temp2)
+    out <- OpasnetUtils::combine(out, temp1, temp2)
     out <- unkeep(out * info, prevresults = TRUE, sources = TRUE)
     
     return(out)
@@ -403,15 +389,6 @@ expo_dir <- Ovariable(
   unit="ng/d"
 )
 
-expo_dir <- EvalOutput(expo_dir)
-#View(expo_dir@output)
-
-ggplot(oapply(expo_dir, cols=c("Iter"),FUN=mean)@output,
-       aes(x=Age, weight=expo_dirResult,fill=Fish))+geom_bar()+
-  facet_wrap(~Compound, scales="free_y")+
-  labs(title="Eri yhdisteiden saanti kalasta")
-ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
-
 exposure <- Ovariable(
   "exposure",
   dependencies = data.frame(
@@ -435,18 +412,15 @@ exposure <- Ovariable(
   unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 )
 
-exposure <- Ovariable("exposure", data=data.frame(Result=1))
-if(FALSE) {
-exposure <- EvalOutput(exposure)
-View(exposure@output)
-
-ggplot(exposure@output, aes(x=Age, weight=exposureResult, fill=Fish))+geom_bar()+
-  facet_grid(Compound~Exposure, scales="free_y")+
-  labs(
-    title="Exposure to compounds",
-    y="(omega: mg/d; vit D: ug/d, PFAS: ng/d)"
-  )
-} # END IF
+exposure <- Ovariable(
+  "exposure",
+  dependencies=data.frame(Name=c("amount","conc")),
+  formula = function(...) {
+    out <- amount * conc
+    colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
+    return(out)
+  }
+)
 
 ```
 
@@ -454,16 +428,21 @@ ggplot(exposure@output, aes(x=Age, weight=exposureResult, fill=Fish))+geom_bar()
 objects.latest("Op_en2261",code_name="BoDattr2") # [[Health impact assessment]]
 tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
 
+```
+
+```{r summary tables}
 oprint(summary(amount,"mean"))
-oprint(summary(BoD,"mean"))
-oprint(summary(BoDattr,"mean"))
+oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Exposure_agent","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Gender","Response"),"mean"))
 oprint(summary(case_burden,"mean"))
 oprint(summary(conc,"mean"))
 oprint(summary(dose,"mean"))
 oprint(summary(ERF,"mean"))
 oprint(summary(expo_dir,"mean"))
 #oprint(summary(exposure,"mean"))
-oprint(summary(fish_proportion,"mean"))
+#oprint(summary(fish_proportion,"mean"))
 oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
@@ -477,22 +456,59 @@ oprint(summary(RR,"mean"))
 # Graphs
 trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
 
-plot_ly(trim(amount), x=~Scenario, y=~amountResult, color=~Kala, type="bar") %>%
+ggplot(amount@output, aes(x=Gender, weight=amountResult, fill=Kala))+geom_bar()+
+  labs(
+    title="Kalansyönti Suomessa ikäryhmittäin",
+    y="Syönti (g/d)"
+  )
+ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
+
+plot_ly(trim(total_amount), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
   layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
 
 plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
   layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
 
-tmp <- exposure / Ovariable(
-  output = data.frame(
-    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA", "TEQ", "PFAS"),
-    Result = c(1, 1, 1000, 1000, 1000, 1, 1)
-  ),
-  marginal = c(TRUE, FALSE)
-)
+ggplot(conc_pfas@output, aes(x=Fish, y=conc_pfasResult))+geom_point() # Inputed data for missing species.
 
-plot_ly(trim(tmp), x=~exposureSource, y=~Result, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+stat_ecdf()+
+  scale_x_log10()+
+  stat_ecdf(data=conc_eukalat@output, aes(x=conc_eukalatResult))+
+  scale_linetype_manual(values=c("dotted","solid","twodash"))+
+  labs(
+    title="PFAS concentration in fishes in Finland",
+    x="PFAS concentration (ng/g fresh weight)",
+    y="Cumulative probability"
+  )
+# The code may produce some negative values, which are removed from the graph
+ggsave("PFAS-pitoisuus kalassa Suomessa.svg")
+
+ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
+  facet_wrap(~Compound, scales="free_x")
+
+#ggplot(oapply(expo_dir, cols=c("Iter"),FUN=mean)@output,
+#       aes(x=Gender, weight=expo_dirResult,fill=Fish))+geom_bar()+
+#  facet_wrap(~Compound, scales="free_y")+
+#  labs(title="Eri yhdisteiden saanti kalasta")
+#ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
+
+tmp <- exposure #/ Ovariable(
+#  output = data.frame(
+#    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA", "TEQ", "PFAS"),
+#    Result = c(1, 1, 1000, 1000, 1000, 1, 1)
+#  ),
+#  marginal = c(TRUE, FALSE)
+#)
+
+plot_ly(trim(tmp), x=~exposureSource, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
   layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
+
+ggplot(exposure@output, aes(x=Gender, weight=exposureResult, fill=Gender))+geom_bar()+
+  facet_wrap(~Exposure_agent, scales="free_y")+
+  labs(
+    title="Exposure to compounds",
+    y="(omega: mg/d; vit D: ug/d, PFAS: ng/d)"
+  )
 
 cat("Kalaperäisiä tautitaakkoja Suomessa\n")
 
