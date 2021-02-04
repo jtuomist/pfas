@@ -22,6 +22,11 @@ library(plotly)
 oempty(all=TRUE)
 openv.setN(0)
 
+ages <- factor(1:19, labels=c(
+    "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
+    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined")
+)
+
 objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping
 
 #' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/subgrouping on page [[Exposure-response function]]
@@ -76,10 +81,16 @@ What needs to be done for PFAS assessment?
 12. TEQ and MeHg are missing from dose. Check why and correct. DONE
 13. The proportions of All-cause mortality and CHD2 mortality are 3:1 in [Kotimaisen kalan edistämisohjelma](http://fi.opasnet.org/fi/Kotimaisen_kalan_edist%C3%A4misohjelma) but 3:2 in this analysis. Why?
 14. In exposure, ALA + DHA < Omega3. Why?
-15. BoDattr: age group 45 - 50 is way smaller than any other group. Why?
+15. BoDattr: age group 45 - 50 is way smaller than any other group. Why? Solution: it's the misplaces 5-9-year age group. DONE
 16. conc_mehg does not contain Iter although it is probabilistic. Solution: Update formula. DONE
-17. All TEQ responses are way too large. Why? Is there a unit problem?
+17. TEQ response for cancer morbidity is way too large. Why? Is there a unit problem? Let's look at age group 45-49. BoD 3800, BoDattr 970, dose (Female) 188, CSF 0.0005, incidence 0.00657, population (Female) 154000. This makes case burden = BoD / I / P = 3800/0.00657/154000 = 3.7 DALY/case which is ten times higher than Goherr case burden 0.39 DALY/case. The reason is that the former is about life-time exposure while the latter is per one-year exposure, which is the correct way. The current PAF implies that 21 and 31 % of cancers in females and males, respectively are caused by TEQ in all age groups. That's an artifact also from the lifetime vs yearly mismatch.
 18. MeHg exposure is ca. 2 ug/d when you would assume 1 mg/kg * 0.03 kg/d = 30 ug/d. Where is the difference?
+19. Sperm concentration and dental defect show fairly large BoD. This is because the ERFs have exposure units pg/g, while the exposure has pg/d. Solution: implement the expo_dir submodule.
+20. Why is average fish so much higher with PFAS concentration than other fish species and the expectation? Because individual samples are accidentally summed, not bootstrapped. Solution: update formula for conc_pfas.
+21. Correct levels(Age)
+22. expo_indir for TEQ is still unrealistically high.
+
+
 
 ```{r case-specific adjustments}
 
@@ -89,10 +100,8 @@ RRorig <- RR@formula
 
 RR@formula <- function(...) {
   out <- RRorig()
-  out <- out * Ovariable(output=data.frame(Age=c(
-    "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
-    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined"),
-    Result=1),
+  out <- out * Ovariable(
+    output=data.frame(Age = ages, Result=1),
     marginal=c(TRUE,FALSE)
   )
   return(out)
@@ -166,9 +175,7 @@ population <- Ovariable(
   data=prepare(dat, "population", c("Type", "Exposure_agent", "Response","Unit")),
   unit = "#"
 )
-population@data$Age <- factor(population@data$Age, levels=c(
-  "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
-  "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined"))
+population@data$Age <- factor(population@data$Age, levels=levels(ages))
 
 incidence <- Ovariable(
   "incidence",
@@ -194,7 +201,7 @@ InpBoD <- EvalOutput(Ovariable( # Evaluated because is not a dependency but an I
 ))
 InpBoD$Response[InpBoD$Response=="All causes"] <- "All-cause mortality"
 InpBoD$Response[InpBoD$Response=="Depressive disorders"] <- "Depression"
-InpBoD$Response[InpBoD$Response=="Neoplasms"] <- "Cancer morbidity"
+InpBoD$Response[InpBoD$Response=="Neoplasms"] <- "Cancer morbidity yearly"
 InpBoD$Response[InpBoD$Response=="Respiratory infections and tuberculosis"] <- "Immunosuppression" # Infections of 0-9-year-olds are assumed to represent the background BoD of immunosuppressive effect of PFAS
 InpBoD$Response[InpBoD$Response=="Cardiovascular diseases"] <- "CHD2 mortality"
 
@@ -251,6 +258,8 @@ conc_pfas <- Ovariable(
     out$Area <- "Porvoo"
     out <- expand_index(out, list(Fish=list(Perch=c(
       "Average fish", "Pike","Rainbow trout","Roach", "Salmon", "Vendace", "Whitefish"))))
+    out <- out[sample(nrow(out@output)),]
+    out <- out[!duplicated(out@output[intersect(colnames(out@output),c("Fish","Compound","Iter"))]),]
     out@marginal <- c(TRUE, TRUE, FALSE, TRUE, TRUE)
     return(out)
   },
@@ -274,9 +283,9 @@ conc <- Ovariable(
     conc_vit <- oapply(conc_vit, cols=c("Kala", "Adjust"),FUN=mean)
     colnames(conc_vit@output)[colnames(conc_vit@output)=="Nutrient"] <- "Compound"
 
-    conc_pfas <- oapply(conc_pfas, cols=c("Obs","Area"), FUN=mean)
+#    conc_pfas <- oapply(conc_pfas, cols=c("Obs","Area"), FUN=mean) # Redundant because handled already
     conc_pfas$Compound[conc_pfas$Compound %in% c("PFOA","PFNA","PFHxS","PFOS")] <- "PFAS"
-    conc_pfas <- oapply(conc_pfas, cols="", FUN=sum)
+    conc_pfas <- oapply(conc_pfas, cols="Area", FUN=sum) # Works because only one area
     
     conc_pcddf$Compound <- "TEQ"
     
@@ -393,22 +402,6 @@ info <- Ovariable(
 } # END IF
 ############################### Code from Goherr assessment ends
 
-expo_dir <- Ovariable(
-  "expo_dir",
-  dependencies = data.frame(Name=c("conc", "amount")),
-  formula = function(...) {
-    
-    conc$Fish[conc$Fish %in% c("Perch","Pike-perch","Eel","")] <- "Average fish"
-    conc <- oapply(conc, cols="", FUN=mean)
-    out <- conc * amount 
-    
-#    colnames(out@output)[colnames(out@output)=="Nutrient"] <- "Exposure_agent"
-      
-    return(out)
-  },
-  unit="ng/d"
-)
-
 exposure <- Ovariable(
   "exposure",
   dependencies = data.frame(
@@ -423,24 +416,31 @@ exposure <- Ovariable(
       "Op_en7805/mc2d") # [[Two-dimensional Monte Carlo]]
   ),
   formula = function(...) {
+#    expo_indir$Exposure <- NULL
+    expo_indir <- expo_indir[expo_indir$Gender =="Female",]
+    expo_indir$Gender <- NULL
+    
+    expo_dir$Exposure <- "Direct"
+    
     out <- OpasnetUtils::combine(expo_dir, expo_indir)
     out <- unkeep(out, "Source.1", sources=TRUE)
     out <- mc2d(out)
-    out$Exposure[is.na(out$Exposure)] <- "Direct"
     return(out)
   },
   unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 )
 
-exposure <- Ovariable(
-  "exposure",
+expo_dir <- Ovariable(
+  "expo_dir",
   dependencies=data.frame(Name=c("amount","conc")),
   formula = function(...) {
     out <- amount * conc
     colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
     return(out)
-  }
+  },
+  unit = "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 )
+
 
 ```
 
@@ -461,7 +461,8 @@ oprint(summary(conc,"mean"))
 oprint(summary(dose,"mean"))
 oprint(summary(ERF,"mean"))
 oprint(summary(expo_dir,"mean"))
-#oprint(summary(exposure,"mean"))
+oprint(summary(expo_indir,"mean"))
+oprint(summary(exposure,"mean"))
 #oprint(summary(fish_proportion,"mean"))
 oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
@@ -565,6 +566,6 @@ gr <- makeGraph(gr)
 ##################### Diagnostics
 objects.latest("Op_en6007", code_name="diagnostics")
 showLoctable()
-showind()
+tmp <- showind()
 
 ```
