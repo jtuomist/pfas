@@ -58,23 +58,28 @@ expand_index <- function(ova, locations) {
 
 ```
 
-Calculation is based on BONUS GOHERR project and its [http://en.opasnet.org/w/Goherr_assessment](fish health benefit-risk assessment).
+Calculation is based on BONUS GOHERR project and its [fish health benefit-risk assessment](http://en.opasnet.org/w/Goherr_assessment).
 
 What needs to be done for PFAS assessment?
 
-1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE
+1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE. Not age-specific atm.
 2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
 3. Infant's dioxin concentration module must be added. Solution: Use Goherr model for expo_indir DONE
-4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution.
+4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution. DONE but not checked. 
 5. Find why expo_indir is so much higher than EFSA toxicokinetic assessment. Make an alternative model.
 6. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity. DONE
 7. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started. DONE
 8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
-9. Add dioxin and MeHg concentrations. Later.
+9. Add dioxin and MeHg concentrations. DONE
 10. Now that the model runs technically, look through each part to check that it makes sense.
-11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Add RRorig to compensate for this. DONE
-12. TEQ and MeHg are missing from dose. Check why and correct.
-
+11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Solution: Add RRorig to compensate for this. DONE
+12. TEQ and MeHg are missing from dose. Check why and correct. DONE
+13. The proportions of All-cause mortality and CHD2 mortality are 3:1 in [Kotimaisen kalan edistämisohjelma](http://fi.opasnet.org/fi/Kotimaisen_kalan_edist%C3%A4misohjelma) but 3:2 in this analysis. Why?
+14. In exposure, ALA + DHA < Omega3. Why?
+15. BoDattr: age group 45 - 50 is way smaller than any other group. Why?
+16. conc_mehg does not contain Iter although it is probabilistic. Solution: Update formula. DONE
+17. All TEQ responses are way too large. Why? Is there a unit problem?
+18. MeHg exposure is ca. 2 ug/d when you would assume 1 mg/kg * 0.03 kg/d = 30 ug/d. Where is the difference?
 
 ```{r case-specific adjustments}
 
@@ -86,7 +91,7 @@ RR@formula <- function(...) {
   out <- RRorig()
   out <- out * Ovariable(output=data.frame(Age=c(
     "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
-    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+"),
+    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined"),
     Result=1),
     marginal=c(TRUE,FALSE)
   )
@@ -161,6 +166,9 @@ population <- Ovariable(
   data=prepare(dat, "population", c("Type", "Exposure_agent", "Response","Unit")),
   unit = "#"
 )
+population@data$Age <- factor(population@data$Age, levels=c(
+  "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
+  "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined"))
 
 incidence <- Ovariable(
   "incidence",
@@ -259,7 +267,9 @@ conc_pfas <- Ovariable(
 
 conc <- Ovariable(
   "conc",
-  dependencies = data.frame(Name=c("conc_vit", "conc_pfas")),
+  dependencies = data.frame(
+    Name=c("conc_vit", "conc_pfas","conc_pcddf","conc_mehg"),
+    Ident = c(NA,NA,"Op_en3104/pcddf_mean","Op_en4004/conc_mehg_allfish")),
   formula = function(...){
     conc_vit <- oapply(conc_vit, cols=c("Kala", "Adjust"),FUN=mean)
     colnames(conc_vit@output)[colnames(conc_vit@output)=="Nutrient"] <- "Compound"
@@ -268,10 +278,20 @@ conc <- Ovariable(
     conc_pfas$Compound[conc_pfas$Compound %in% c("PFOA","PFNA","PFHxS","PFOS")] <- "PFAS"
     conc_pfas <- oapply(conc_pfas, cols="", FUN=sum)
     
-    out <- OpasnetUtils::combine(conc_vit, conc_pfas)
+    conc_pcddf$Compound <- "TEQ"
+    
+    conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Porvoo",], NULL, mean, c("Area","Kala")) # UPDATE FOR PROBABILISTIC APPROACH
+    conc_mehg$Compound <- "MeHg"
+    
+    out <- OpasnetUtils::combine(conc_vit, conc_pfas, conc_pcddf, conc_mehg)
     return(out)
   }
 )
+
+#conc <- EvalOutput(conc, verbose=TRUE)
+#View(conc@output)
+#View(conc_pcddf@output)
+#View(conc_mehg@output)
 
 ```
 
@@ -469,7 +489,8 @@ plot_ly(trim(total_amount), x=~Kala, y=~total_amountResult, color=~Kala, type="b
 plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
   layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
 
-ggplot(conc_pfas@output, aes(x=Fish, y=conc_pfasResult))+geom_point() # Inputed data for missing species.
+ggplot(conc_pfas@output, aes(x=Fish, y=conc_pfasResult))+geom_point()+ # Inputed data for missing species.
+  coord_flip()
 
 ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+stat_ecdf()+
   scale_x_log10()+
@@ -492,18 +513,10 @@ ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
 #  labs(title="Eri yhdisteiden saanti kalasta")
 #ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
 
-tmp <- exposure #/ Ovariable(
-#  output = data.frame(
-#    Exposure_agent = c("Fish","Vitamin D", "Omega3", "ALA", "DHA", "TEQ", "PFAS"),
-#    Result = c(1, 1, 1000, 1000, 1000, 1, 1)
-#  ),
-#  marginal = c(TRUE, FALSE)
-#)
-
-plot_ly(trim(tmp), x=~exposureSource, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+plot_ly(trim(exposure), x=~Gender, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
   layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
 
-ggplot(exposure@output, aes(x=Gender, weight=exposureResult, fill=Gender))+geom_bar()+
+ggplot(trim(exposure), aes(x=Gender, weight=exposureResult, fill=Gender))+geom_bar()+
   facet_wrap(~Exposure_agent, scales="free_y")+
   labs(
     title="Exposure to compounds",
@@ -537,6 +550,8 @@ if(openv$N>1) {
 ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()
 
 ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
+
+ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")
 
 plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
   layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
