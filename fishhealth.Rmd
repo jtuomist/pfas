@@ -17,6 +17,8 @@ knitr::opts_chunk$set(echo = TRUE)
 library(OpasnetUtils) # Install the newest version from https://github.com/jtuomist/OpasnetUtils not from CRAN.
 library(tidyverse)
 library(plotly)
+library(readxl)
+library(reshape2)
 
 # First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
 oempty(all=TRUE)
@@ -65,7 +67,7 @@ expand_index <- function(ova, locations) {
 
 Calculation is based on BONUS GOHERR project and its [fish health benefit-risk assessment](http://en.opasnet.org/w/Goherr_assessment).
 
-What needs to be done for PFAS assessment?
+What has been done for PFAS assessment?
 
 1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE. Not age-specific atm.
 2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
@@ -90,13 +92,17 @@ What needs to be done for PFAS assessment?
 21. Why is average fish so much higher with PFAS concentration than other fish species and the expectation? Because individual samples are accidentally summed, not bootstrapped. Solution: update formula for conc_pfas. DONE
 22. Incorrect levels(Age). DONE
 23. expo_indir for TEQ is still unrealistically high. Solution: adjust parameters lower. DONE
-24. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: adjust exposure to match mother's exposures.
-25. TEQ sperm concentration effect is surprisingly large. Why?
-26. RR has column Exposure: Direct. This is redundant? Well, it comes from dose (and from exposure). It makes no harm. DONE
-27. PAF of TEQ TWI is -7 and TWI 2018 is 2. How come? ERF, incidence, and case_burden seem to be OK. Solution: There are parentheses missing from formula of PAF. Corrected. DONE
-28. Age group undefined should go to the respective ages. Solution: Exposure should be age-specific. Then "undefined" could be removed. Also, correct incidence not to contain "undefined". 
-29. PFAS BoD TWI is 0. Why? Some people should exceed it. Or is it due to lack of variability?
-30. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way.
+24. RR has column Exposure: Direct. This is redundant? Well, it comes from dose (and from exposure). It makes no harm. DONE
+25. PAF of TEQ TWI is -7 and TWI 2018 is 2. How come? ERF, incidence, and case_burden seem to be OK. Solution: There are parentheses missing from formula of PAF. Corrected. DONE
+26. Take [EFSA food database](https://data.europa.eu/euodp/en/data/dataset/the-efsa-comprehensive-european-food-consumption-database) and derive Finnish fish consumption distributions. DONE
+
+What still needs to be done?
+
+1. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: adjust exposure to match mother's exposures.
+2. TEQ sperm concentration effect is surprisingly large. Why?
+3. Age group undefined should go to the respective ages. Solution: Exposure should be age-specific. Then "undefined" could be removed. Also, correct incidence not to contain "undefined". 
+4. PFAS BoD TWI is 0. Why? Some people should exceed it. Or is it due to lack of variability?
+5. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way. Solution: use ggplot for publishable graphs.
 
 
 ```{r case-specific adjustments}
@@ -176,6 +182,8 @@ amount <- Ovariable(
   unit="g/d"
 )
 # Exposure:To child and To eater not needed, because dioxins are not (yet) included
+
+#amount <- EvalOutput(amount)
 
 population <- Ovariable(
   "population", 
@@ -299,6 +307,7 @@ conc <- Ovariable(
     conc_pfas <- oapply(conc_pfas, cols="Area", FUN=sum) # Works because only one area
     
     conc_pcddf$Compound <- "TEQ"
+    conc_pcddf$Fish[conc_pcddf$Fish=="Baltic herring"] <- "Herring"
     
     conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Porvoo",], NULL, mean, c("Area","Kala")) # UPDATE FOR PROBABILISTIC APPROACH
     conc_mehg$Compound <- "MeHg"
