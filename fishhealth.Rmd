@@ -63,6 +63,8 @@ expand_index <- function(ova, locations) {
   return(ova)
 }
 
+trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
+
 ```
 
 Calculation is based on BONUS GOHERR project and its [fish health benefit-risk assessment](http://en.opasnet.org/w/Goherr_assessment).
@@ -120,6 +122,15 @@ RR@formula <- function(...) {
   return(out)
 }
 
+objects.latest("Op_en1836", code_name="EFSA_amount") #  [[Domestic fish consumption of the general population in Finland]]
+amountOrig <- amount@formula
+amount@formula <- function(...) {
+  out <- amountOrig()
+  out <- out * fish_proportion
+  return(out)
+}
+
+
 ```
 
 ```{r downloads}
@@ -154,7 +165,7 @@ total_amount <- Ovariable(
   data=prepare(dat, "amount", c("Type","Response","Exposure_agent","Unit")),
   unit="M kg/a")
 
-amount <- Ovariable(
+amount_statistics <- Ovariable( # This comes from the Finnish fish market statistics
   "amount",
   dependencies = data.frame(Name=c("total_amount", "fish_proportion")),
   formula = function(...) {
@@ -184,6 +195,11 @@ amount <- Ovariable(
 # Exposure:To child and To eater not needed, because dioxins are not (yet) included
 
 #amount <- EvalOutput(amount)
+#amount_statistics <- EvalOutput(amount_statistics)
+
+#ggplot(amount@output, aes(x=amountResult+0.1, colour=Group))+stat_ecdf()+
+#  facet_wrap(~Fish)+coord_cartesian(xlim=c(1,300))+
+#  scale_x_log10()
 
 population <- Ovariable(
   "population", 
@@ -348,14 +364,22 @@ expo_dir <- Ovariable(
   "expo_dir",
   dependencies=data.frame(Name=c("amount","conc","expo_background")),
   formula = function(...) {
+    amount$Fish[amount$Fish %in% c("Imported fish","Fish product","Tuna")] <- "Average fish"
+    amount <- amount * Ovariable(output=data.frame(
+      Age = ages[-19],
+      Group = c("Toddlers","Other children",rep("Adolescents",2), rep("Adults",9), rep("Elderly",5)),
+      Result = 1
+    ),
+    marginal=c(TRUE,TRUE,FALSE))
     out <- amount * conc
     colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
     out <- OpasnetUtils::combine(out, expo_background)
-    out <- out * Ovariable(output = data.frame(Age=ages[-19], Result=1), marginal=c(TRUE,FALSE))
+#    out <- out * Ovariable(output = data.frame(Age=ages[-19], Result=1), marginal=c(TRUE,FALSE))
     return(out)
   },
   unit = "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 )
+#expo_dir <- EvalOutput(expo_dir, verbose=TRUE)
 
 exposure <- Ovariable(
   "exposure",
@@ -374,8 +398,8 @@ exposure <- Ovariable(
     expo_indir <- expo_indir[expo_indir$Gender =="Female",] # Age must be selected too, if available, and then collapsed if >1 location.
     expo_indir$Gender <- NULL
     expo_indir <- expo_indir[expo_indir$Age %in% c("20 - 24","25 - 29", "30 - 34", "35 - 39", "40 - 44"),]
-    expo_indir <- CollapseMarginal(expo_indir, "Age")
-    expo_indir$Age <- NULL
+    expo_indir <- CollapseMarginal(expo_indir, "Age", "mean") # "sample" is not possible if openv$N==0
+    expo_indir$Age <- "0 - 4"
     
     expo_dir$Exposure <- "Direct"
     
@@ -399,6 +423,7 @@ BoDattr$Age <- factor(BoDattr$Age, levels=levels(ages))
 ```
 
 ```{r summary tables}
+if(FALSE) {
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
@@ -416,6 +441,7 @@ oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
 oprint(summary(RR,"mean"))
+}
 
 ```
 
@@ -423,16 +449,14 @@ oprint(summary(RR,"mean"))
 ```{r plots}
 ###################
 # Graphs
-trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
-
-ggplot(amount@output, aes(x=Gender, weight=amountResult, fill=Kala))+geom_bar()+
+ggplot(amount@output, aes(x=Gender, weight=amountResult, fill=Fish))+geom_bar()+
   labs(
     title="Kalansyönti Suomessa ikäryhmittäin",
     y="Syönti (g/d)"
   )
 ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
 
-plot_ly(trim(total_amount), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
+plot_ly(trim(EvalOutput(total_amount)), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
   layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
 
 plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
@@ -514,9 +538,9 @@ plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, tex
   layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
 
 ################ Insight network
-gr <- scrape(type="assessment")
-objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
-gr <- makeGraph(gr)
+#gr <- scrape(type="assessment")
+#objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
+#gr <- makeGraph(gr)
 #export_graph(gr, "ruori.svg")
 #render_graph(gr) # Does not work: Error in generate_dot(graph) : object 'attribute' not found
 ##################### Diagnostics
