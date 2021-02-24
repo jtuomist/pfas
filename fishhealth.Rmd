@@ -22,7 +22,7 @@ library(reshape2)
 
 # First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
 oempty(all=TRUE)
-openv.setN(0)
+openv.setN(1000)
 
 ages <- factor(1:19, labels=c(
     "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
@@ -97,14 +97,23 @@ What has been done for PFAS assessment?
 24. RR has column Exposure: Direct. This is redundant? Well, it comes from dose (and from exposure). It makes no harm. DONE
 25. PAF of TEQ TWI is -7 and TWI 2018 is 2. How come? ERF, incidence, and case_burden seem to be OK. Solution: There are parentheses missing from formula of PAF. Corrected. DONE
 26. Take [EFSA food database](https://data.europa.eu/euodp/en/data/dataset/the-efsa-comprehensive-european-food-consumption-database) and derive Finnish fish consumption distributions. DONE
+27. Age group undefined should go to the respective ages. Solution: Exposure should be age-specific. Then "undefined" could be removed. Also, correct incidence not to contain "undefined". DONE
+28. PFAS BoD (BoDattr?) TWI is 0. Why? Some people should exceed it. Or is it due to lack of variability? Solution: Not any more. I don't know what changed. DONE
+29. TEQ sperm concentration effect is surprisingly large. Why? Solution: Probably was due to age group mismatch. Now seens OK. DONE
+30. Exposure graph should be age-specific. DONE
+31. Fish consumption graph should be age-specific. DONE
+32. Many graphs get numbers wrong when openv$N>1. Solution: use trim. DONE
+33. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way. Solution: use ggplot for publishable graphs. DONE
+34. Fish-specific concentrations are constants. Why? Because of data. PFAS and MeHg are probabilistic, and that is enough. DONE
+35. MeHg concentration is lognormal and logSD may be > 1.7, i.e. there may easily be >1000-fold concentration differences. Solution: There was a unit conversion error in data.frame Hg. This was corrected. DONE
 
 What still needs to be done?
 
-1. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: adjust exposure to match mother's exposures.
-2. TEQ sperm concentration effect is surprisingly large. Why?
-3. Age group undefined should go to the respective ages. Solution: Exposure should be age-specific. Then "undefined" could be removed. Also, correct incidence not to contain "undefined". 
-4. PFAS BoD TWI is 0. Why? Some people should exceed it. Or is it due to lack of variability?
-5. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way. Solution: use ggplot for publishable graphs.
+1. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution 1: adjust exposure to match mother's exposures. 
+3. Sperm concentration occurs also in women.
+6. All-cause and CHD mortality are double counting. Solution: subtract CHD from all-cause.
+7. Remove PFAS and dioxin TWI from the final graphs.
+8. Vitamin D goes to positive side although it is a benefit.
 
 
 ```{r case-specific adjustments}
@@ -325,18 +334,13 @@ conc <- Ovariable(
     conc_pcddf$Compound <- "TEQ"
     conc_pcddf$Fish[conc_pcddf$Fish=="Baltic herring"] <- "Herring"
     
-    conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Porvoo",], NULL, mean, c("Area","Kala")) # UPDATE FOR PROBABILISTIC APPROACH
+    conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Gulf of Finland",], NULL, mean, c("Area","Kala"))
     conc_mehg$Compound <- "MeHg"
     
     out <- OpasnetUtils::combine(conc_vit, conc_pfas, conc_pcddf, conc_mehg)
     return(out)
   }
 )
-
-#conc <- EvalOutput(conc, verbose=TRUE)
-#View(conc@output)
-#View(conc_pcddf@output)
-#View(conc_mehg@output)
 
 ```
 
@@ -371,10 +375,10 @@ expo_dir <- Ovariable(
       Result = 1
     ),
     marginal=c(TRUE,TRUE,FALSE))
-    out <- amount * conc
+    out <- amount * conc * Ovariable(
+      output = data.frame(Exposcen = c("BAU","No exposure"), Result=c(1,0)), marginal=c(TRUE,FALSE))
     colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
     out <- OpasnetUtils::combine(out, expo_background)
-#    out <- out * Ovariable(output = data.frame(Age=ages[-19], Result=1), marginal=c(TRUE,FALSE))
     return(out)
   },
   unit = "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
@@ -417,13 +421,27 @@ exposure <- Ovariable(
 
 ```{r modelrun}
 objects.latest("Op_en2261",code_name="BoDattr2") # [[Health impact assessment]]
+
+BoDattrOrig <- BoDattr@formula
+
+BoDattr@formula <- function(...) {
+  out <- BoDattrOrig()
+  out$Age <- factor(out$Age, levels=levels(ages))
+
+  tmp <- BoDattr[BoDattr$Response=="CHD2 mortality",] * -1
+  tmp$Response <- "All-cause mortality"
+  tmp$Exposure_agent <- "Fish"
+  out <- OpasnetUtils::combine(out, tmp, name = "BoDattr")
+  out <- oapply(tst,NULL,sum,"")
+  return(out)
+}
+
 tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
-BoDattr$Age <- factor(BoDattr$Age, levels=levels(ages))
 
 ```
 
 ```{r summary tables}
-if(FALSE) {
+
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
@@ -434,6 +452,7 @@ oprint(summary(conc,"mean"))
 oprint(summary(dose,"mean"))
 oprint(summary(ERF,"mean"))
 oprint(summary(expo_dir,"mean"))
+oprint(summary(expo_dir,marginals="Exposure_agent"))
 oprint(summary(expo_indir,"mean"))
 oprint(summary(exposure,"mean"))
 #oprint(summary(fish_proportion,"mean"))
@@ -441,7 +460,7 @@ oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
 oprint(summary(RR,"mean"))
-}
+
 
 ```
 
@@ -449,7 +468,8 @@ oprint(summary(RR,"mean"))
 ```{r plots}
 ###################
 # Graphs
-ggplot(amount@output, aes(x=Gender, weight=amountResult, fill=Fish))+geom_bar()+
+ggplot(trim(amount), aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  facet_wrap(~Gender)+
   labs(
     title="Kalansyönti Suomessa ikäryhmittäin",
     y="Syönti (g/d)"
@@ -462,7 +482,10 @@ plot_ly(trim(EvalOutput(total_amount)), x=~Kala, y=~total_amountResult, color=~K
 plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
   layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
 
-ggplot(conc_pfas@output, aes(x=Fish, y=conc_pfasResult))+geom_point()+ # Inputed data for missing species.
+ggplot(conc_mehg@output, aes(x=conc_mehgResult, colour=Area))+stat_ecdf()+
+  scale_x_log10()+facet_wrap(~Fish, scales="free_x")
+
+ggplot(trim(conc_pfas), aes(x=Fish, y=conc_pfasResult))+geom_point()+ # Inputed data for missing species.
   coord_flip()
 
 ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+stat_ecdf()+
@@ -486,10 +509,10 @@ ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
 #  labs(title="Eri yhdisteiden saanti kalasta")
 #ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
 
-plot_ly(trim(exposure), x=~Gender, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+plot_ly(trim(oapply(exposure,NULL,mean,"Gender")), x=~Age, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
   layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
 
-ggplot(trim(exposure), aes(x=Gender, weight=exposureResult, fill=Gender))+geom_bar()+
+ggplot(trim(oapply(exposure,NULL,mean,"Gender")), aes(x=Age, weight=exposureResult))+geom_bar()+
   facet_wrap(~Exposure_agent, scales="free_y")+
   labs(
     title="Exposure to compounds",
@@ -502,7 +525,7 @@ if(openv$N>1) {
   tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Response")))
   tmp <- data.frame(
     Altiste = tmp$Exposure_agent,
-    Vaikutus = tmp$Response,
+#    Vaikutus = tmp$Response,
     Keskiarvo = as.character(signif(tmp$mean,2)),
     "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
     Keskihajonta = signif(tmp$sd,2)
