@@ -22,7 +22,7 @@ library(reshape2)
 
 # First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
 oempty(all=TRUE)
-openv.setN(1000)
+openv.setN(500)
 
 ages <- factor(1:19, labels=c(
     "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
@@ -106,14 +106,12 @@ What has been done for PFAS assessment?
 33. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way. Solution: use ggplot for publishable graphs. DONE
 34. Fish-specific concentrations are constants. Why? Because of data. PFAS and MeHg are probabilistic, and that is enough. DONE
 35. MeHg concentration is lognormal and logSD may be > 1.7, i.e. there may easily be >1000-fold concentration differences. Solution: There was a unit conversion error in data.frame Hg. This was corrected. DONE
-
-What still needs to be done?
-
-1. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution 1: adjust exposure to match mother's exposures. 
-3. Sperm concentration occurs also in women.
-6. All-cause and CHD mortality are double counting. Solution: subtract CHD from all-cause.
-7. Remove PFAS and dioxin TWI from the final graphs.
-8. Vitamin D goes to positive side although it is a benefit.
+36. Remove PFAS and dioxin TWI from the final graphs. DONE
+37. Vitamin D goes to positive side although it is a benefit. Solution: Exposcen was missing. DONE
+38. Sperm concentration occurs also in women. Solution: add Gender to case_burden. DONE
+39. Sperm concentration is in BoD but missing in BoDattr. Solution: Bring back to ERFchoice. DONE
+40. All-cause and CHD mortality are double counting. Solution: subtract CHD from all-cause. DONE
+41. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: Use the mother - infant model anyway but use mother's hair concentration as the output. DONE
 
 
 ```{r case-specific adjustments}
@@ -427,16 +425,25 @@ BoDattrOrig <- BoDattr@formula
 BoDattr@formula <- function(...) {
   out <- BoDattrOrig()
   out$Age <- factor(out$Age, levels=levels(ages))
+  out <- oapply(out,NULL,sum,c("BoDSource","InpBoDSource","PAFSource"))
 
-  tmp <- BoDattr[BoDattr$Response=="CHD2 mortality",] * -1
+  tmp <- out[out$Response=="CHD2 mortality",] * -1
   tmp$Response <- "All-cause mortality"
   tmp$Exposure_agent <- "Fish"
   out <- OpasnetUtils::combine(out, tmp, name = "BoDattr")
-  out <- oapply(tst,NULL,sum,"")
   return(out)
 }
 
-tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
+#BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
+BoDattr2 <- Ovariable(
+  "BoDattr2",
+  dependencies = data.frame(Name=c("BoDattr")),
+  formula = BoDattrOrig)
+BoDattr2 <- EvalOutput(BoDattr2, verbose = TRUE)
+
+oprint(BoD@output[BoD$Iter=="500" & BoD$Gender=="Male" & BoD$Age=="70 - 74" , ])
+oprint(BoDattr@output[BoDattr$Iter=="500" & BoDattr$Gender=="Male" & BoDattr$Age=="70 - 74" , ])
+oprint(BoDattr2@output[BoDattr2$Iter=="500" & BoDattr2$Gender=="Male" & BoDattr2$Age=="70 - 74" , ])
 
 ```
 
@@ -444,6 +451,7 @@ tryCatch(BoDattr <- EvalOutput(BoDattr, verbose=TRUE))
 
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
+oprint(summary(BoD,marginals=c("Gender","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Exposure_agent","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Gender","Response"),"mean"))
@@ -550,9 +558,18 @@ ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent)
 ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])
 
+ggplot(trim(BoDattr2), aes(x=Age, weight=BoDattr2Result, fill=Response))+geom_bar(position="stack")+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])
+
 ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
   coord_cartesian(ylim=c(-2000,2000))
+
+ggplot(trim(oapply(BoDattr,c("Response","Exposure_agent","Iter"),sum)), 
+       aes(x=Exposure_agent, y=BoDattrResult, color=Response, label=signif(BoDattrResult,2)))+geom_point()+
+#  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  geom_text(nudge_y=-5000)
+  
 
 plot_ly(trim(BoDattr), x=~Age, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
   layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
