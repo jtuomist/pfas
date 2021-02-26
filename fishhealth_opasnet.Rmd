@@ -1,0 +1,204 @@
+---
+title: "fishhealth_opasnet"
+author: "Jouni Tuomisto"
+date: "26 2 2021"
+output: html_document
+---
+## Shortcut to model download
+
+This is a model version that fetches all ovariables and other objects directly from Opasnet and runs the model.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) 
+
+library(OpasnetUtils) # Install the newest version from https://github.com/jtuomist/OpasnetUtils not from CRAN.
+library(tidyverse)
+library(plotly)
+library(readxl)
+library(reshape2)
+
+openv.setN(500)
+
+```
+
+
+```{r modelrun}
+
+objects.latest("Op_fi5932",code_name="initiate") # [[PFAS-yhdisteiden tautitaakka]]
+
+conc_eukalat <- EvalOutput(conc_eukalat)
+BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
+
+```
+
+```{r summary tables}
+
+oprint(summary(amount,"mean"))
+oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
+oprint(summary(BoD,marginals=c("Gender","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Exposure_agent","Response"),"mean"))
+oprint(summary(BoDattr,marginals=c("Gender","Response"),"mean"))
+oprint(summary(case_burden,"mean"))
+oprint(summary(conc,"mean"))
+oprint(summary(dose,"mean"))
+oprint(summary(ERF,"mean"))
+oprint(summary(expo_dir,"mean"))
+oprint(summary(expo_dir,marginals="Exposure_agent"))
+oprint(summary(expo_indir,"mean"))
+oprint(summary(exposure,"mean"))
+#oprint(summary(fish_proportion,"mean"))
+oprint(summary(incidence,"mean"))
+oprint(summary(PAF,"mean"))
+oprint(summary(population,"mean"))
+oprint(summary(RR,"mean"))
+
+
+```
+
+
+```{r plots}
+###################
+# Graphs
+tmp <- trim(amount)
+tmp$Group <- factor(tmp$Group, levels=c("Infants","Toddlers","Other children","Adolescents",
+                                        "Adults", "Elderly"))
+ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  facet_wrap(~Gender)+coord_flip()+
+  labs(
+    title="Kalansyönti Suomessa ikäryhmittäin",
+    y="Syönti (g/d)"
+  )
+ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
+
+plot_ly(trim(EvalOutput(total_amount)), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
+  layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
+
+plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
+  layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
+
+ggplot(conc_mehg@output, aes(x=conc_mehgResult, colour=Area))+stat_ecdf()+
+  scale_x_log10()+facet_wrap(~Fish, scales="free_x")
+
+ggplot(trim(conc_pfas), aes(x=Fish, y=conc_pfasResult))+geom_point()+ # Inputed data for missing species.
+  coord_flip()
+
+ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+stat_ecdf()+
+  scale_x_log10()+
+  stat_ecdf(data=conc_eukalat@output, aes(x=conc_eukalatResult))+
+  scale_linetype_manual(values=c("dotted","solid","twodash"))+
+  labs(
+    title="PFAS concentration in fish in Finland",
+    x="PFAS concentration (ng/g fresh weight)",
+    y="Cumulative probability"
+  )
+# The code may produce some negative values, which are removed from the graph
+ggsave("PFAS-pitoisuus kalassa Suomessa.svg")
+
+ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
+  facet_wrap(~Compound, scales="free_x")
+
+limits <- data.frame(
+  Exposure_agent = c("TEQ","MeHg","PFAS","Vitamin D"),
+  Type = c("TDI","TDI","TDI","RDI"),
+  Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
+)
+ggplot(expo_dir@output, aes(x=expo_dirResult+0.5, colour=Age))+stat_ecdf()+
+  facet_wrap(~Exposure_agent, scales="free_x")+
+  scale_x_log10()+
+  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
+  labs(title="Eri yhdisteiden saanti kalasta",
+       x="Altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
+       y="kumulatiivinen todennäköisyys")
+ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
+
+plot_ly(trim(oapply(exposure,NULL,mean,"Gender")), x=~Age, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
+  layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
+
+ggplot(trim(oapply(exposure,NULL,mean,"Gender")), aes(x=Age, weight=exposureResult))+geom_bar()+
+  facet_wrap(~Exposure_agent, scales="free_y")+
+  labs(
+    title="Exposure to compounds",
+    y="(omega: mg/d; vit D: ug/d, PFAS: ng/d)"
+  )
+
+cat("Kalaperäisiä tautitaakkoja Suomessa\n")
+
+if(openv$N>1) {
+  tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Response")))
+  tmp <- data.frame(
+    Altiste = tmp$Exposure_agent,
+#    Vaikutus = tmp$Response,
+    Keskiarvo = as.character(signif(tmp$mean,2)),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )#[rev(match(lev, tmp$Exposure_agent)),]
+
+  oprint(tmp)
+  
+  tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Exposure_agent")))
+  tmp <- data.frame(
+    Terveysvaikutus = tmp$Response,
+    Keskiarvo = signif(tmp$mean,2),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )
+  oprint(tmp)
+}
+
+ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()+
+  labs(
+    title="Tautitaakka kalasta tekijöittäin",
+    x="Kalassa oleva tekijä",
+    y="Tautitaakka (DALY/a"
+  )
+ggsave("Tautitaakka kalasta tekijöittäin.svg")
+
+ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
+
+ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  labs(
+    title="Tautitaakka kalassa olevista tekijöistä",
+    x="Ikäryhmä",
+    y="Tautitaakka (DALY/a)"
+  )
+ggsave("Tautitaakka kaloissa olevista tekijöistä.svg")
+
+ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  coord_cartesian(ylim=c(-2000,2000))
+
+tmp <- trim(oapply(BoDattr,c("Response","Exposure_agent","Iter"),sum))
+ggplot(tmp, aes(x=Exposure_agent, y=BoDattrResult, color=Response, label=signif(BoDattrResult,2)))+geom_point()+
+#  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  geom_text(nudge_y=-5000)
+  
+ggplot(tmp, aes(x=BoDattrResult, y=BoDattrResult, size=(abs(BoDattrResult)), color=Response, label=Response))+
+  geom_point()+geom_text()+scale_size()
+
+plot_ly(trim(BoDattr), x=~Age, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
+  layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
+
+plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
+  layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
+
+################ Insight network
+#gr <- scrape(type="assessment")
+#objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
+#gr <- makeGraph(gr)
+#export_graph(gr, "ruori.svg")
+#render_graph(gr) # Does not work: Error in generate_dot(graph) : object 'attribute' not found
+##################### Diagnostics
+#objects.latest("Op_en6007", code_name="diagnostics")
+print(showLoctable())
+print(showind())
+
+```
+
+```{r finale}
+# Run all above
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
