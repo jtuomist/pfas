@@ -1,15 +1,14 @@
 ---
-title: "Fish and health with national fish promotion programme"
-output:
-  html_document:
-    df_print: paged
-  pdf_document: default
-  word_document: default
+title: "Fish and health with national fish promotion programme: model run and results"
+author: "Jouni Tuomisto"
+date: "27 2 2021"
+output: html_document
 ---
+## Shortcut to model download
 
 This is an open assessment looking at potential health effects of a national fish promotion program in Finland. The details of the assessment are described at [Opasnet](http://fi.opasnet.org/fi/PFAS-yhdisteiden tautitaakka). This file contains the R code to run the assessment model.
 
-Knit to html for best performance.
+This code downloads all the ovariables created by the previous code, fishhealth_initiate.Rmd, runs the model and plots various graphs and tables about the results.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE) 
@@ -20,420 +19,16 @@ library(plotly)
 library(readxl)
 library(reshape2)
 
-# First empty all objects for a fresh start. Otherwise may be problems with CheckDecisions.
-oempty(all=TRUE)
 openv.setN(500)
 
-ages <- factor(1:19, labels=c(
-    "0 - 4", "5 - 9", "10 - 14", "15 - 19", "20 - 24", "25 - 29", "30 - 34", "35 - 39", "40 - 44", "45 - 49", "50 - 54",
-    "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined")
-)
-
-objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping
-
-#' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/subgrouping on page [[Exposure-response function]]
-#' @param dat data.frame
-#' @param type type of data that is used. Must match content in column Type
-#' @param drop columns to remove
-#' @return data.frame
-prepare <- function(dat, type=NULL, drop=NULL) {
-  out <- dat
-  if(!is.null(type)) out <- out[out$Type %in% type , ]
-  if(!is.null(drop)) out <- out[!colnames(out) %in% drop]
-  return(subgrouping(out))
-}
-
-#' Copies results from one location to other locations while keeping everything else constant
-#' @param ova ovariable to be used
-#' @param locations list of relevant indices. Each item is a list that has a name of an existing locations, and the content is a vector of new location names.
-#' @return the input ovariable with new rows containing the new locations
-
-expand_index <- function(ova, locations) {
-  if("ovariable" %in% class(ova)) out <- ova@output else out <- ova
-  for(i in names(locations)) {
-    for(j in names(locations[[i]])) {
-      addpiece <- out[out[[i]]==j,]
-      for(k in locations[[i]][[j]]) {
-        addpiece[[i]] <- k
-        out <- rbind(out,addpiece)
-      }
-    }
-  }
-  if("ovariable" %in% class(ova)) ova@output <- out else ova <- out
-  return(ova)
-}
-
-trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
-
 ```
 
-Calculation is based on BONUS GOHERR project and its [fish health benefit-risk assessment](http://en.opasnet.org/w/Goherr_assessment).
-
-What has been done for PFAS assessment?
-
-1. Amount should be gender and age-specific, because we need to worry about young mothers. Solution: take KKE amounts of fish, and scale those with the Goherr subgroup-specific proportions. DONE. Not age-specific atm.
-2. Amounts should reflect the actual fish consumption in Porvoo. Solution: postpone and use national statistics. DONE
-3. Infant's dioxin concentration module must be added. Solution: Use Goherr model for expo_indir DONE
-4. The module must be updated to match PFAS as well. Solution: update the module to contain column Exposure_agent. Change body fat parameter to volume of distribution. DONE but not checked. 
-5. Find why expo_indir is so much higher than EFSA toxicokinetic assessment. Make an alternative model. Solution: problem was with too high absorption fractions, probably. DONE
-6. Add ERF for PFAS (sum of PFOS, PFHxS, PFOA, PFNA). Solution: Make a new page for ERF of PFAS and add that to adjusted ERFs. First immunology; postpone cholesterol and low birth weight and liver toxicity. DONE
-7. Add case burdens for PFAS outcomes. Solution: give rough estimates for immunology to get started. DONE
-8. Add PFAS concentrations to data. Solution: Look at Porvoo concentrations first and make conc_pfas; combine that with conc_vit. DONE
-9. Add dioxin and MeHg concentrations. DONE
-10. Now that the model runs technically, look through each part to check that it makes sense. DONE
-11. If PAF contains some inputs with Age and some without Age (implying that they apply to any age group), only the explicit age groups remain in the end. Solution: Add RRorig to compensate for this. DONE
-12. TEQ and MeHg are missing from dose. Check why and correct. DONE
-13. The proportions of All-cause mortality and CHD2 mortality are 3:1 in [Kotimaisen kalan edistämisohjelma](http://fi.opasnet.org/fi/Kotimaisen_kalan_edist%C3%A4misohjelma) but 3:2 in this analysis. Why? Probably omega3-concentration is higher here. Solution: Consider double counting, should the overlap be handled in some way? Also, CHD2 mortality ERF is non-linear, and here these is no background intake. Solution: add background. DONE
-14. In exposure, ALA + DHA < Omega3. Why? Because the values come directly from Fineli and probably omega3 contains other fatty acids as well. DONE
-15. BoDattr: age group 45 - 50 is way smaller than any other group. Why? Solution: it's the misplaces 5-9-year age group. DONE
-16. conc_mehg does not contain Iter although it is probabilistic. Solution: Update formula. DONE
-17. TEQ response for cancer morbidity is way too large. Why? Is there a unit problem? Let's look at age group 45-49. BoD 3800, BoDattr 970, dose (Female) 188, CSF 0.0005, incidence 0.00657, population (Female) 154000. This makes case burden = BoD / I / P = 3800/0.00657/154000 = 3.7 DALY/case which is ten times higher than Goherr case burden 0.39 DALY/case. The reason is that the former is about life-time exposure while the latter is per one-year exposure, which is the correct way. The current PAF implies that 21 and 31 % of cancers in females and males, respectively are caused by TEQ in all age groups. That's an artifact also from the lifetime vs yearly mismatch. DONE
-18. Related to cancer yearly-lifetime mismatch, also case burden must be corrected. No need, because data comes from InpBoD. DONE
-19. MeHg exposure is ca. 2 ug/d when you would assume 1 mg/kg * 0.03 kg/d = 30 ug/d. Where is the difference? Because average fish only 0.1 mg/kg. In addition, salmon is missing. DONE
-20. Sperm concentration and dental defect show fairly large BoD. This is because the ERFs have exposure units pg/g, while the exposure has pg/d. Solution: implement the expo_indir submodule. DONE
-21. Why is average fish so much higher with PFAS concentration than other fish species and the expectation? Because individual samples are accidentally summed, not bootstrapped. Solution: update formula for conc_pfas. DONE
-22. Incorrect levels(Age). DONE
-23. expo_indir for TEQ is still unrealistically high. Solution: adjust parameters lower. DONE
-24. RR has column Exposure: Direct. This is redundant? Well, it comes from dose (and from exposure). It makes no harm. DONE
-25. PAF of TEQ TWI is -7 and TWI 2018 is 2. How come? ERF, incidence, and case_burden seem to be OK. Solution: There are parentheses missing from formula of PAF. Corrected. DONE
-26. Take [EFSA food database](https://data.europa.eu/euodp/en/data/dataset/the-efsa-comprehensive-european-food-consumption-database) and derive Finnish fish consumption distributions. DONE
-27. Age group undefined should go to the respective ages. Solution: Exposure should be age-specific. Then "undefined" could be removed. Also, correct incidence not to contain "undefined". DONE
-28. PFAS BoD (BoDattr?) TWI is 0. Why? Some people should exceed it. Or is it due to lack of variability? Solution: Not any more. I don't know what changed. DONE
-29. TEQ sperm concentration effect is surprisingly large. Why? Solution: Probably was due to age group mismatch. Now seens OK. DONE
-30. Exposure graph should be age-specific. DONE
-31. Fish consumption graph should be age-specific. DONE
-32. Many graphs get numbers wrong when openv$N>1. Solution: use trim. DONE
-33. Breast cancer, Vitamin D recommendation, and depression go to positive side although they are benefits. Why? It is a plotly thing, as the bars continue from the previous bar and therefore stack in a strange way. Solution: use ggplot for publishable graphs. DONE
-34. Fish-specific concentrations are constants. Why? Because of data. PFAS and MeHg are probabilistic, and that is enough. DONE
-35. MeHg concentration is lognormal and logSD may be > 1.7, i.e. there may easily be >1000-fold concentration differences. Solution: There was a unit conversion error in data.frame Hg. This was corrected. DONE
-36. Remove PFAS and dioxin TWI from the final graphs. DONE
-37. Vitamin D goes to positive side although it is a benefit. Solution: Exposcen was missing. DONE
-38. Sperm concentration occurs also in women. Solution: add Gender to case_burden. DONE
-39. Sperm concentration is in BoD but missing in BoDattr. Solution: Bring back to ERFchoice. DONE
-40. All-cause and CHD mortality are double counting. Solution: subtract CHD from all-cause. DONE
-41. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: Use the mother - infant model anyway but use mother's hair concentration as the output. DONE
-
-
-```{r case-specific adjustments}
-
-objects.latest("Op_en2261", code_name="RR2") # RR on page [[Health impact assessment]]
-
-RRorig <- RR@formula
-
-RR@formula <- function(...) {
-  out <- RRorig()
-  out <- out * Ovariable(
-    output=data.frame(Age = ages, Result=1),
-    marginal=c(TRUE,FALSE)
-  )
-  return(out)
-}
-
-objects.latest("Op_en1836", code_name="EFSA_amount") #  [[Domestic fish consumption of the general population in Finland]]
-amountOrig <- amount@formula
-amount@formula <- function(...) {
-  out <- amountOrig()
-  out <- out * fish_proportion
-  return(out)
-}
-
-
-```
-
-```{r downloads}
-# This code was forked from https://github.com/jtuomist/fishhealth/blob/master/fishhealth.Rmd
-# This code was previously forked from code Op_fi5923/model on page [[Kotimaisen kalan edistämisohjelma]]
-# The code was even more previously forked from Op_fi5889/model on page [[Ruori]] and Op_en7748/model on page [[Goherr assessment]]
-
-dat <- opbase.data("Op_fi5932", subset="Malliparametrit")[-1] # [[PFAS-yhdeisteiden tautitaakka]]
-dec <- opbase.data("Op_fi5932", subset="Decisions")[-1]
-DecisionTableParser(dec)
-
-CTable <- opbase.data("Op_fi5932",subset="CollapseMarginals")
-#for(i in 1:ncol(CTable)) {CTable[[i]] <- as.character(CTable[[i]])} # The default is currently character, not factor
-CollapseTableParser(CTable)
-
-cat("Laskennassa käytetty data.\n")
-dat
-cat("Tarkastellut päätökset.\n")
-dec
-cat("Aggregoidut marginaalit.\n")
-CTable
-
-dummy <- Ovariable("dummy",data=data.frame(Age="dummy", Fish="dummy", Compound="dummy", Area="dummy", Result=1)) # Keep these columns marginals
-
-fish_proportion <- Ovariable( # How population subgroups eat fish differently
-  "fish_proportion",
-  data = data.frame(prepare(dat,"fish proportion",c("Type","Exposure_agent","Response","Unit"))),
-  unit="proportion of the mean")
-
-total_amount <- Ovariable(
-  "total_amount",
-  data=prepare(dat, "amount", c("Type","Response","Exposure_agent","Unit")),
-  unit="M kg/a")
-
-amount_statistics <- Ovariable( # This comes from the Finnish fish market statistics
-  "amount",
-  dependencies = data.frame(Name=c("total_amount", "fish_proportion")),
-  formula = function(...) {
-    amount <- total_amount
-      # Filleted weight, i.e. no loss.
-    amount <- amount * 1000 / 5.52 /365.25 
-      # M kg/a per 5.52M population --> g/d per average person.
-    amount <- amount * fish_proportion
-      # fish_proportion tells the relative amount in each subgroup
-  
-    # Match KKE-classification in amount with Fineli classification
-    tmp <- Ovariable(
-      output = data.frame(
-        Kala = c("Kasvatettu", "Kaupallinen", "Kirjolohi", "Silakka", "Vapaa-ajan", "Muu tuonti", "Tuontikirjolohi", "Tuontilohi"),
-        Fish = c("Whitefish", "Average fish","Rainbow trout", "Herring", "Average fish", "Average fish", "Rainbow trout", "Salmon"),
-        Result = 1
-      ),
-      marginal = c(TRUE, TRUE, FALSE)
-    )
-    
-    amount <- amount * tmp
-    
-    return(amount)
-  },
-  unit="g/d"
-)
-# Exposure:To child and To eater not needed, because dioxins are not (yet) included
-
-#amount <- EvalOutput(amount)
-#amount_statistics <- EvalOutput(amount_statistics)
-
-#ggplot(amount@output, aes(x=amountResult+0.1, colour=Group))+stat_ecdf()+
-#  facet_wrap(~Fish)+coord_cartesian(xlim=c(1,300))+
-#  scale_x_log10()
-
-population <- Ovariable(
-  "population", 
-  data=prepare(dat, "population", c("Type", "Exposure_agent", "Response","Unit")),
-  unit = "#"
-)
-population@data$Age <- factor(population@data$Age, levels=levels(ages))
-
-incidence <- Ovariable(
-  "incidence",
-  data = prepare(dat,"incidence",c("Type","Exposure_agent","Unit")),
-  unit="1/person-year")
-incidence@data$Age <- factor(incidence@data$Age, levels=levels(ages))
-
-case_burden <- Ovariable(
-  "case_burden",
-  data = prepare(dat,"case burden",c("Type", "Exposure_agent","Unit")),
-  unit="DALY/case")
-
-ERFchoice <- Ovariable(
-  "ERFchoice",
-  data = 
-    prepare(dat, "ERFchoice", c("Unit", "Type"))
-)
-
-#### InpBoD
-
-tmp <- prepare(dat, "BoD", c("Type","Exposure_agent","Unit"))
-tmp[tmp=="All causes"] <- "All-cause mortality"
-tmp[tmp=="Depressive disorders"] <- "Depression"
-tmp[tmp=="Neoplasms"] <- "Cancer morbidity yearly"
-tmp[tmp=="Respiratory infections and tuberculosis"] <- "Immunosuppression" # Infections of 0-9-year-olds are assumed to represent the background BoD of immunosuppressive effect of PFAS
-tmp[tmp=="Cardiovascular diseases"] <- "CHD2 mortality"
-tmp$Age <- factor(tmp$Age, levels=levels(ages))
-InpBoD <- EvalOutput(Ovariable( # Evaluated because is not a dependency but an Input
-  "InpBoD",
-  data = tmp,
-  unit="DALY/a"
-))
-
-```
-
-```{r concentrations}
-
-conc_vit <- Ovariable(
-  "conc_vit",
-  ddata = "Op_en1838", # [[Concentrations of beneficial nutrients in fish]]
-  subset = "Fineli data for common fish species",
-  unit="ALA mg/g, DHA mg/g, Fish g/g, Omega3 mg/g, Vitamin D µg/g f.w. after adjustment"
-)
-  df = conc_vit@data
-  df$Nutrient[df$Nutrient=="D-vitamiini (µg)"] <- "Vitamin D"
-  df$Nutrient[df$Nutrient=="rasvahapot n-3 moni-tyydyttymättömät (g)"] <- "Omega3"
-  df$Nutrient[df$Nutrient=="rasvahappo 18:3 n-3 (alfalinoleenihappo) (mg)"] <- "ALA"
-  df$Nutrient[df$Nutrient=="rasvahappo 22:6 n-3 (DHA) (mg)"] <- "DHA"
-  df$Nutrient[df$Nutrient=="proteiini (g)"] <- "Fish"
-  df$conc_vitResult[df$Nutrient=="Fish"] <- "1"
-  df <- dropall(df[df$Nutrient %in% c("Vitamin D", "Omega3", "ALA", "DHA", "Fish") , ])
-conc_vit@data <- df
-
-######## Concentration of PFAS
-
-# Data from EU-kalat3 (Finland excl Vanhankaupunginlahti): # pg/g fresh weight
-#       POP     mean       sd      min   Q0.025   median   Q0.975      max
-# 2.5% PFOS 2055.757 1404.045 305.0399 330.1365 1533.269 5029.697 5814.935
-
-# Data from EU-kalat3 (Vanhankaupunginlahti, Helsinki) # ng/g f.w.
-#      POP   mean       sd      min   Q0.025   median   Q0.975      max
-#2.5% PFOS 14.428 11.94542 1.499441 1.607789 15.64988 35.32517 38.91994
-
-conc_eukalat <- EvalOutput(Ovariable(
-  "conc_eukalat",
-  data = data.frame(
-    Area = c("Suomi","Helsinki"),
-    Compound="PFOS",
-    Result=c("2.056 (3.301 - 5.030)", "14.428 (1.499 - 35.325)")),
-  unit="ng/g fresh weight"
-))
-
-conc_pfas_raw <- Ovariable(
-  "conc_pfas_raw",
-  ddata="Op_fi5932",subset="PFAS concentrations",
-  unit="ng/g f.w.")
-
-conc_pfas <- Ovariable(
-  "conc_pfas",
-  dependencies = data.frame(Name="conc_pfas_raw"),
-  formula = function(...) {
-    out <- conc_pfas_raw
-    out$Source <- NULL
-    out$Area <- "Porvoo"
-    out <- expand_index(out, list(Fish=list(Perch=c(
-      "Average fish", "Pike","Rainbow trout","Roach", "Salmon", "Vendace", "Whitefish"))))
-    out <- out[sample(nrow(out@output)),]
-    out <- out[!duplicated(out@output[intersect(colnames(out@output),c("Fish","Compound","Iter"))]),]
-    out@marginal <- c(TRUE, TRUE, FALSE, TRUE, TRUE)
-    return(out)
-  },
-  unit="ng/g fresh weight"
-)
-
-#sum_pfas <- oapply(conc_pfas, cols=c("Kala","Compound"), FUN=sum)
-#tmp <- conc_pfas / sum_pfas
-#summary(tmp, marginals="Compound")
-#
-## This tells that PFOS consists of 71 - 97 % of the four key PFAS, while PFOA, PFNA, and PFHxS consist of 
-# 0 - 10 %, 2 - 18 %, and 0 - 9 %, respectively.
-# Even if we included the next most abundant congeners, i.e. PFDA and PFUnA, the overall picture would not change.
-
-conc <- Ovariable(
-  "conc",
-  dependencies = data.frame(
-    Name=c("conc_vit", "conc_pfas","conc_pcddf","conc_mehg"),
-    Ident = c(NA,NA,"Op_en3104/pcddf_mean","Op_en4004/conc_mehg_allfish")),
-  formula = function(...){
-    conc_vit <- oapply(conc_vit, cols=c("Kala", "Adjust"),FUN=mean)
-    colnames(conc_vit@output)[colnames(conc_vit@output)=="Nutrient"] <- "Compound"
-
-#    conc_pfas <- oapply(conc_pfas, cols=c("Obs","Area"), FUN=mean) # Redundant because handled already
-    conc_pfas$Compound[conc_pfas$Compound %in% c("PFOA","PFNA","PFHxS","PFOS")] <- "PFAS"
-    conc_pfas <- oapply(conc_pfas, cols="Area", FUN=sum) # Works because only one area
-    
-    conc_pcddf$Compound <- "TEQ"
-    conc_pcddf$Fish[conc_pcddf$Fish=="Baltic herring"] <- "Herring"
-    
-    conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Gulf of Finland",], NULL, mean, c("Area","Kala"))
-    conc_mehg$Compound <- "MeHg"
-    
-    out <- OpasnetUtils::combine(conc_vit, conc_pfas, conc_pcddf, conc_mehg)
-    return(out)
-  }
-)
-
-```
-
-```{r exposure}
-###################################################################
-# Code copied from http://en.opasnet.org/w/Goherr_assessment#
-
-mc2dparam<- list(
-  N2 = 10, # Number of iterations in the new Iter
-  strength = 50, # Sample size to which the fun is to be applied. Resembles number of observations
-  run2d = FALSE, # Should the mc2d function be used or not?
-  info = 1, # Ovariable that contains additional indices, e.g. newmarginals.
-  newmarginals = c("Exposure"), # Names of columns that are non-marginals but should be sampled enough to become marginals
-  method = "bootstrap", # which method to use for 2D Monte Carlo? Currently bootsrap is the only option.
-  fun = mean # Function for aggregating the first Iter dimension.
-)
-
-expo_background <- Ovariable(
-  "expo_background",
-  data = prepare(dat, "background exposure", c("Type","Response","Unit")),
-  unit = "Vitamin D: µg /day; DHA, EPA, Omega3: mg /day"
-)
-
-expo_dir <- Ovariable(
-  "expo_dir",
-  dependencies=data.frame(Name=c("amount","conc","expo_background")),
-  formula = function(...) {
-    amount$Fish[amount$Fish %in% c("Imported fish","Fish product","Tuna")] <- "Average fish"
-    amount <- amount * Ovariable(output=data.frame(
-      Age = ages[-19],
-      Group = c("Toddlers","Other children",rep("Adolescents",2), rep("Adults",9), rep("Elderly",5)),
-      Result = 1
-    ),
-    marginal=c(TRUE,TRUE,FALSE))
-    out <- amount * conc * Ovariable(
-      output = data.frame(Exposcen = c("BAU","No exposure"), Result=c(1,0)), marginal=c(TRUE,FALSE))
-    colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
-    out <- OpasnetUtils::combine(out, expo_background)
-    return(out)
-  },
-  unit = "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
-)
-#expo_dir <- EvalOutput(expo_dir, verbose=TRUE)
-
-exposure <- Ovariable(
-  "exposure",
-  dependencies = data.frame(
-    Name = c(
-      "expo_dir", # direct exposure, i.e. the person eats or breaths the exposure agent themself
-      "expo_indir", # indirect exposure, i.e. the person (typically fetus or infant) is exposed via someone else (mother)
-      "mc2d" # 2D Monte Carlo function
-    ),
-    Ident = c(
-      NA,
-      "Op_en7797/expo_indir2", # [[Infant's dioxin exposure]] # expo_indir
-      "Op_en7805/mc2d") # [[Two-dimensional Monte Carlo]]
-  ),
-  formula = function(...) {
-    expo_indir <- expo_indir[expo_indir$Gender =="Female",] # Age must be selected too, if available, and then collapsed if >1 location.
-    expo_indir$Gender <- NULL
-    expo_indir <- expo_indir[expo_indir$Age %in% c("20 - 24","25 - 29", "30 - 34", "35 - 39", "40 - 44"),]
-    expo_indir <- CollapseMarginal(expo_indir, "Age", "mean") # "sample" is not possible if openv$N==0
-    expo_indir$Age <- "0 - 4"
-    
-    expo_dir$Exposure <- "Direct"
-    
-    out <- OpasnetUtils::combine(expo_dir, expo_indir)
-    out <- mc2d(out)
-    return(out)
-  },
-  unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
-)
-
-#oempty(c("expo_background", "expo_dir","expo_indir","exposure"))
-#exposure <- EvalOutput(exposure, verbose=TRUE)
-#View(exposure@output)
-```
 
 ```{r modelrun}
-objects.latest("Op_en2261",code_name="BoDattr2") # [[Health impact assessment]]
 
-BoDattrOrig <- BoDattr@formula
+objects.latest("Op_fi5932",code_name="initiate") # [[PFAS-yhdisteiden tautitaakka]]
 
-BoDattr@formula <- function(...) {
-  out <- BoDattrOrig()
-  out$Age <- factor(out$Age, levels=levels(ages))
-  out <- oapply(out,NULL,sum,c("BoDSource","InpBoDSource","PAFSource"))
-
-  tmp <- out[out$Response=="CHD2 mortality",] * -1
-  tmp$Response <- "All-cause mortality"
-  tmp$Exposure_agent <- "Fish"
-  out <- OpasnetUtils::combine(out, tmp, name = "BoDattr")
-  return(out)
-}
-
+conc_eukalat <- EvalOutput(conc_eukalat)
 BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
 
 ```
@@ -467,8 +62,11 @@ oprint(summary(RR,"mean"))
 ```{r plots}
 ###################
 # Graphs
-ggplot(trim(amount), aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
-  facet_wrap(~Gender)+
+tmp <- trim(amount)
+tmp$Group <- factor(tmp$Group, levels=c("Infants","Toddlers","Other children","Adolescents",
+                                        "Adults", "Elderly"))
+ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  facet_grid(Gender~.)+coord_flip()+
   labs(
     title="Kalansyönti Suomessa ikäryhmittäin",
     y="Syönti (g/d)"
@@ -492,7 +90,7 @@ ggplot(conc_pfas@output, aes(x=conc_pfasResult, color=Compound, linetype=Area))+
   stat_ecdf(data=conc_eukalat@output, aes(x=conc_eukalatResult))+
   scale_linetype_manual(values=c("dotted","solid","twodash"))+
   labs(
-    title="PFAS concentration in fishes in Finland",
+    title="PFAS concentration in fish in Finland",
     x="PFAS concentration (ng/g fresh weight)",
     y="Cumulative probability"
   )
@@ -502,11 +100,19 @@ ggsave("PFAS-pitoisuus kalassa Suomessa.svg")
 ggplot(conc@output, aes(x=concResult, colour=Fish))+stat_ecdf()+
   facet_wrap(~Compound, scales="free_x")
 
-#ggplot(oapply(expo_dir, cols=c("Iter"),FUN=mean)@output,
-#       aes(x=Gender, weight=expo_dirResult,fill=Fish))+geom_bar()+
-#  facet_wrap(~Compound, scales="free_y")+
-#  labs(title="Eri yhdisteiden saanti kalasta")
-#ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
+limits <- data.frame(
+  Exposure_agent = c("TEQ","MeHg","PFAS","Vitamin D"),
+  Type = c("TDI","TDI","TDI","RDI"),
+  Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
+)
+ggplot(expo_dir@output, aes(x=expo_dirResult+0.5, colour=Age))+stat_ecdf()+
+  facet_wrap(~Exposure_agent, scales="free_x")+
+  scale_x_log10()+
+  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
+  labs(title="Eri yhdisteiden saanti kalasta",
+       x="Altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
+       y="kumulatiivinen todennäköisyys")
+ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
 
 plot_ly(trim(oapply(exposure,NULL,mean,"Gender")), x=~Age, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
   layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
@@ -542,12 +148,24 @@ if(openv$N>1) {
   oprint(tmp)
 }
 
-ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()
+ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()+
+  labs(
+    title="Tautitaakka kalasta tekijöittäin",
+    x="Kalassa oleva tekijä",
+    y="Tautitaakka (DALY/a"
+  )
+ggsave("Tautitaakka kalasta tekijöittäin.svg")
 
 ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
 
 ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
-  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  labs(
+    title="Tautitaakka kalassa olevista tekijöistä",
+    x="Ikäryhmä",
+    y="Tautitaakka (DALY/a)"
+  )
+ggsave("Tautitaakka kaloissa olevista tekijöistä.svg")
 
 ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
@@ -574,22 +192,15 @@ plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, tex
 #export_graph(gr, "ruori.svg")
 #render_graph(gr) # Does not work: Error in generate_dot(graph) : object 'attribute' not found
 ##################### Diagnostics
-objects.latest("Op_en6007", code_name="diagnostics")
-showLoctable()
-showind()
-
-limits <- data.frame(
-  Exposure_agent = c("TEQ","MeHg","PFAS","Vitamin D"),
-  Type = c("TDI","TDI","TDI","RDI"),
-  Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
-)
-ggplot(expo_dir@output, aes(x=expo_dirResult+0.5, colour=Age))+stat_ecdf()+
-  facet_wrap(~Exposure_agent, scales="free_x")+
-  scale_x_log10()+
-  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))
+#objects.latest("Op_en6007", code_name="diagnostics")
+print(showLoctable())
+print(showind())
 
 ```
 
 ```{r finale}
 # Run all above
 ```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
