@@ -3,6 +3,9 @@ title: "Fish and health with national fish promotion programme: model run and re
 author: "Jouni Tuomisto"
 date: "27 2 2021"
 output: html_document
+params:
+  N: 100
+  porvoo: TRUE
 ---
 ## Shortcut to model download
 
@@ -19,7 +22,7 @@ library(plotly)
 library(readxl)
 library(reshape2)
 
-openv.setN(500)
+openv.setN(params$N)
 
 ```
 
@@ -28,13 +31,18 @@ openv.setN(500)
 
 objects.latest("Op_fi5932",code_name="initiate") # [[PFAS-yhdisteiden tautitaakka]]
 
+if(!params$porvoo) {
+  Decamount@dectable <- Decamount@dectable[Decamount@dectable$Option=="BAU",]
+  Decconc@dectable <- Decconc@dectable[Decconc@dectable$Option=="BAU",]
+}
+
 conc_eukalat <- EvalOutput(conc_eukalat)
 BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
 
 ```
 
 ```{r summary tables}
-
+if(FALSE) {
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoD,marginals=c("Gender","Response"),"mean"))
@@ -54,7 +62,7 @@ oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
 oprint(summary(RR,"mean"))
-
+}
 
 ```
 
@@ -63,21 +71,28 @@ oprint(summary(RR,"mean"))
 ###################
 # Graphs
 tmp <- trim(amount)
+tmp <- tmp[tmp$Fishing!="Vanhankaupunginlahti",]
 tmp$Group <- factor(tmp$Group, levels=c("Infants","Toddlers","Other children","Adolescents",
                                         "Adults", "Elderly"))
-ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
-  facet_grid(Gender~.)+coord_flip()+
+
+p <- ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  coord_flip()+
   labs(
     title="Kalansyönti Suomessa ikäryhmittäin",
     y="Syönti (g/d)"
   )
-ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
+  if(params$porvoo) {
+    p <- p + facet_grid(Fishing ~ Gender)
+    print(p)
+    ggsave("Kalansyönti Suomessa ja Porvoossa ikäryhmittäin.svg")
+  } else {
+    p <- p + facet_grid(Gender~ .)
+    print(p)
+    ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
+  }
 
 plot_ly(trim(EvalOutput(total_amount)), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
   layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
-
-plot_ly(trim(conc_vit), x=~Nutrient, y=~conc_vitResult, color=~Kala, type="scatter", mode="markers") %>%
-  layout(yaxis=list(title="Concentrations of nutrients (mg or ug /g)"))
 
 ggplot(conc_mehg@output, aes(x=conc_mehgResult, colour=Area))+stat_ecdf()+
   scale_x_log10()+facet_wrap(~Fish, scales="free_x")
@@ -105,17 +120,33 @@ limits <- data.frame(
   Type = c("TDI","TDI","TDI","RDI"),
   Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
 )
-ggplot(expo_dir@output, aes(x=expo_dirResult+0.5, colour=Age))+stat_ecdf()+
-  facet_wrap(~Exposure_agent, scales="free_x")+
+
+tmp <- EvalOutput(expo_dir, verbose=TRUE) # Calculated again because we want Group which is collapsed
+tmp <- oapply(tmp,NULL,sum,c("Fish","fish_proportionSource","amountSource","concSource"))
+tmp <- tmp[tmp$Exposcen=="BAU" & !tmp$Exposure_agent %in% c("ALA", "EPA"),]
+tmp$Group <- factor(tmp$Group, levels=c("Toddlers","Other children","Adolescents","Adults","Elderly"))
+if(params$porvoo) {
+  tmp <- tmp[tmp$Exposure_agent=="PFAS",] 
+  limits <- limits[limits$Exposure_agent=="PFAS",]
+  titl <- "PFAS-yhdisteiden saanti kalasta eri ryhmissä"
+} else titl <- "Yhdisteiden saanti kalasta"
+p <- ggplot(tmp@output, aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
   scale_x_log10()+
   geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
-  labs(title="Eri yhdisteiden saanti kalasta",
-       x="Altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
+  geom_point(data = oapply(tmp,c("Group","Exposure_agent","Fishing"),mean)@output,
+             aes(x=expo_dirResult, y=0.1), shape=1, size=3, stroke=2)+
+  labs(title=titl,
+       x="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
        y="kumulatiivinen todennäköisyys")
-ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
-
-plot_ly(trim(oapply(exposure,NULL,mean,"Gender")), x=~Age, y=~exposureResult, color=~Exposure_agent, text=~Exposure_agent, type="bar") %>%
-  layout(yaxis=list(title="Exposure to nutrients (g or ug /d)"))
+if(params$porvoo) {
+  p <- p + facet_grid(Fishing ~ .)
+  print(p)
+  ggsave("PFAS-yhdisteiden saanti kalasta Suomessa ja Porvoossa.svg")
+} else {
+  p <- p + facet_wrap(~Exposure_agent, scales="free_x")
+  print(p)
+  ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
+}
 
 ggplot(trim(oapply(exposure,NULL,mean,"Gender")), aes(x=Age, weight=exposureResult))+geom_bar()+
   facet_wrap(~Exposure_agent, scales="free_y")+
@@ -127,10 +158,24 @@ ggplot(trim(oapply(exposure,NULL,mean,"Gender")), aes(x=Age, weight=exposureResu
 cat("Kalaperäisiä tautitaakkoja Suomessa\n")
 
 if(openv$N>1) {
+  tmp <- summary(ERF)
+  tmp <- data.frame(
+    Altiste = tmp$Exposure_agent,
+    Vaikutus = tmp$Response,
+    Annosvastefunktio = tmp$ER_function,
+    Skaalaus = tmp$Scaling,
+    Havainto = tmp$Observation,
+    Keskiarvo = as.character(signif(tmp$mean,2)),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )#[rev(match(lev, tmp$Exposure_agent)),]
+
+  oprint(tmp)
+  
   tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Response")))
   tmp <- data.frame(
     Altiste = tmp$Exposure_agent,
-#    Vaikutus = tmp$Response,
+    Alue = tmp$Fishing,
     Keskiarvo = as.character(signif(tmp$mean,2)),
     "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
     Keskihajonta = signif(tmp$sd,2)
@@ -141,6 +186,17 @@ if(openv$N>1) {
   tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Exposure_agent")))
   tmp <- data.frame(
     Terveysvaikutus = tmp$Response,
+    Alue = tmp$Fishing,
+    Keskiarvo = signif(tmp$mean,2),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  )
+  oprint(tmp)
+
+  tmp <- summary(oapply(BoDattr,NULL,sum,c("Age","Gender","Exposure_agent","Response")))
+  tmp <- data.frame(
+    Terveysvaikutus = "Yhteensä",
+    Alue = tmp$Fishing,
     Keskiarvo = signif(tmp$mean,2),
     "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
     Keskihajonta = signif(tmp$sd,2)
@@ -148,7 +204,8 @@ if(openv$N>1) {
   oprint(tmp)
 }
 
-ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()+
+tmp <- trim(BoDattr[BoDattr$Fishing=="BAU",])
+ggplot(tmp, aes(x=Exposure_agent, weight=BoDattrResult, fill=Response))+geom_bar()+
   labs(
     title="Tautitaakka kalasta tekijöittäin",
     x="Kalassa oleva tekijä",
@@ -156,34 +213,28 @@ ggplot(trim(BoDattr), aes(x=Exposure_agent, weight=BoDattrResult, fill=Response)
   )
 ggsave("Tautitaakka kalasta tekijöittäin.svg")
 
-ggplot(trim(BoDattr), aes(x=Response, weight=BoDattrResult, fill=Exposure_agent))+geom_bar()
-
-ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
+ggplot(tmp, aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
   labs(
     title="Tautitaakka kalassa olevista tekijöistä",
     x="Ikäryhmä",
     y="Tautitaakka (DALY/a)"
   )
-ggsave("Tautitaakka kaloissa olevista tekijöistä.svg")
+ggsave("Tautitaakka kalassa olevista tekijöistä.svg")
 
-ggplot(trim(BoDattr), aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
+tmp <- trim(BoDattr / population * 1000)
+p <- ggplot(tmp, aes(x=Age, weight=Result, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
-  coord_cartesian(ylim=c(-2000,2000))
-
-tmp <- trim(oapply(BoDattr,c("Response","Exposure_agent","Iter"),sum))
-ggplot(tmp, aes(x=Exposure_agent, y=BoDattrResult, color=Response, label=signif(BoDattrResult,2)))+geom_point()+
-#  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
-  geom_text(nudge_y=-5000)
-  
-ggplot(tmp, aes(x=BoDattrResult, y=BoDattrResult, size=(abs(BoDattrResult)), color=Response, label=Response))+
-  geom_point()+geom_text()+scale_size()
-
-plot_ly(trim(BoDattr), x=~Age, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
-  layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
-
-plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, text=~paste(Age, Exposure_agent, sep=": "), type="bar") %>%
-  layout(yaxis=list(title="Disease burden (DALY /a); CHD2=coronary heart disease"), barmode="stack")
+  labs(
+    title="Tautitaakka kalassa olevista tekijöistä per henkilö",
+    x="Ikäryhmä",
+    y="Tautitaakka (mDALY/hlö/a)"
+  )
+if(params$porvoo) {
+  p <- p + facet_wrap(~Fishing)
+  oprint(p)
+  ggsave("Tautitaakka kalassa olevista tekijöistä per henkilö.svg")
+}
 
 ################ Insight network
 #gr <- scrape(type="assessment")
@@ -193,8 +244,8 @@ plot_ly(trim(BoDattr), x=~Exposure_agent, y=~BoDattrResult, color=~Response, tex
 #render_graph(gr) # Does not work: Error in generate_dot(graph) : object 'attribute' not found
 ##################### Diagnostics
 #objects.latest("Op_en6007", code_name="diagnostics")
-print(showLoctable())
-print(showind())
+#print(showLoctable())
+#print(showind())
 
 ```
 

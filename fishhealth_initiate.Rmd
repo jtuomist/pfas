@@ -57,6 +57,11 @@ What has been done for PFAS assessment?
 40. All-cause and CHD mortality are double counting. Solution: subtract CHD from all-cause. DONE
 41. MeHg IQ effect is surprisingly large. Why? The exposure increased as salmon and rainbow trout concentrations became available, but still it is bigger than expected. PAF is 110 % so this cannot be. The reason is that the response is based on mother's intake, and not it is allocated to the child. Solution: Use the mother - infant model anyway but use mother's hair concentration as the output. DONE
 
+Should still be done:
+
+1. Herring - TEQ in conc turns into NA because of a factor mismatch.
+2. Pike is missing from amount although it is an important source of MeHg.
+3. All salmonids inherit the concentrations from Baltic salmon.
 
 ```{r initiate, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE) 
