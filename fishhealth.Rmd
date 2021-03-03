@@ -1,11 +1,11 @@
 ---
 title: "Fish and health with national fish promotion programme: model run and results"
 author: "Jouni Tuomisto"
-date: "27 2 2021"
+date: "03 03 2021"
 output: html_document
 params:
-  N: 100
-  porvoo: TRUE
+  N: 500
+  porvoo: FALSE
 ---
 ## Shortcut to model download
 
@@ -32,7 +32,6 @@ openv.setN(params$N)
 objects.latest("Op_fi5932",code_name="initiate") # [[PFAS-yhdisteiden tautitaakka]]
 
 if(!params$porvoo) {
-  Decamount@dectable <- Decamount@dectable[Decamount@dectable$Option=="BAU",]
   Decconc@dectable <- Decconc@dectable[Decconc@dectable$Option=="BAU",]
 }
 
