@@ -52,23 +52,35 @@ eu3 <- reshape(
   direction = "wide"
 )
 colnames(eu3) <- gsub("eu2Result\\.","",colnames(eu3))
+eu3$TEQ <- eu3$PCDDF + eu3$PCB
+eu3$PFAS <- eu3$PFOA + eu3$PFOS
 
-conl_nd <- c("PFOA","PFOS","DBT","MBT","TBT","DPhT","TPhT")
-eu4 <- eu3[rowSums(is.na(eu3[conl_nd]))<7 , c(1:5,match(conl_nd,colnames(eu3)))]
-fisl_nd <- as.character(unique(eu4$Fish))
-conc_nd <- add_loq(eu4[6:ncol(eu4)])
+#conl_nd <- c("PFAS","PFOA","PFOS","DBT","MBT","TBT","DPhT","TPhT")
+conl_nd <- c("PFAS","PFOS","TBT")
+fisl <- fisl_nd <- c("Baltic herring","Bream","Flounder","Perch","Roach","Salmon","Whitefish")
 
-eu3 <- eu3[!is.na(eu3$PCDDF) , !colnames(eu3) %in% conl_nd]
-conl <- colnames(eu3)[-(1:5)]
-fisl <- as.character(unique(eu3$Fish))
+eu4 <- eu3[rowSums(is.na(eu3[conl_nd]))<length(conl_nd) & eu3$Fish %in% fisl_nd ,
+           c(1:5,match(conl_nd,colnames(eu3)))]
+#fisl_nd <- as.character(unique(eu4$Fish))
+
+conc_nd <- add_loq(eu4[eu4$Fish %in% fisl_nd , 6:ncol(eu4)])
+
+conl <- c("TEQ","PCDDF","PCB") # setdiff(colnames(eu3)[-(1:5)], conl_nd)
+eu3 <- eu3[!is.na(eu3$PCDDF) & eu3$Fish %in% fisl , c(1:5, match(conl,colnames(eu3)))]
+#conl <- colnames(eu3)[-(1:5)]
+#fisl <- as.character(unique(eu3$Fish))
 
 oprint(head(eu3))
+oprint(head(eu4))
 
 C <- length(conl)
 Fi <- length(fisl)
-N <- 100
+N <- 200
+thin <- 100
 conl
 fisl
+conl_nd
+fisl_nd
 
 conc <- add_loq(eu3[rowSums(is.na(eu3))==0 , 6:ncol(eu3)]) # Remove rows with missing data.
 
@@ -105,14 +117,12 @@ mod <- textConnection(
       }
     }
     # Non-dioxins
-    for(i in 1:Fi_nd) { # Fi = fish species
-      for(j in 1:C_nd) {
+    for(j in 1:C_nd) {
+      tau_nd[j] ~ dgamma(0.001,0.001)
+      for(i in 1:Fi_nd) { # Fi = fish species
         pred_nd[i,j] ~ dnorm(mu[i,j], tau_nd[j])
         mu_nd[i,j] ~ dnorm(0, 0.0001)
       }
-    }
-    for(j in 1:C_nd) {
-      tau_nd[j] ~ dgamma(0.001,0.001)
     }
   }
 ")
@@ -137,10 +147,10 @@ jags <- jags.model(
     Omega0 = diag(C)/100000
   ),
   n.chains = 4,
-  n.adapt = 100
+  n.adapt = 200
 )
 
-update(jags, 100)
+update(jags, 1000)
 
 samps.j <- jags.samples(
   jags, 
@@ -154,8 +164,8 @@ samps.j <- jags.samples(
     'mu_nd',
     'tau_nd'
   ), 
-  #  thin=1000,
-  N
+  thin=thin,
+  N*thin
 )
 dimnames(samps.j$Omega) <- list(Fish = fisl, Compound = conl, Compound2 = conl, Iter=1:N, Chain=1:4)
 dimnames(samps.j$mu) <- list(Fish = fisl, Compound = conl, Iter = 1:N, Chain = 1:4)
@@ -169,25 +179,26 @@ dimnames(samps.j$tau_nd) <- list(Compound = conl_nd, Iter = 1:N, Chain = 1:4)
 ##### conc.param contains expected values of the distribution parameters from the model
 
 conc.param <- list(
-    Omega = apply(samps.j$Omega, MARGIN = 1:3, FUN = mean),
-    #      lenp = cbind(
-    #        mean = apply(samps.j$lenp, MARGIN = 1, FUN = mean),
-    #        sd = apply(samps.j$lenp, MARGIN = 1, FUN = sd)
-    #      ),
-    mu = apply(samps.j$mu, MARGIN = 1:2, FUN = mean),
-    #      timep = cbind(
-    #        mean = apply(samps.j$timep, MARGIN = 1, FUN = mean),
-    #        sd = apply(samps.j$timep, MARGIN = 1, FUN = sd)
-    #      )
-    mu_nd =  apply(samps.j$mu_nd, MARGIN = 1:2, FUN = mean),
-    tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean)
-  )
-  #    names(dimnames(conc.param$lenp)) <- c("Fish","Metaparam")
-  #    names(dimnames(conc.param$timep)) <- c("Dummy","Metaparam")
+  Omega = apply(samps.j$Omega, MARGIN = 1:3, FUN = mean),
+  #      lenp = cbind(
+  #        mean = apply(samps.j$lenp, MARGIN = 1, FUN = mean),
+  #        sd = apply(samps.j$lenp, MARGIN = 1, FUN = sd)
+  #      ),
+  mu = apply(samps.j$mu, MARGIN = 1:2, FUN = mean),
+  #      timep = cbind(
+  #        mean = apply(samps.j$timep, MARGIN = 1, FUN = mean),
+  #        sd = apply(samps.j$timep, MARGIN = 1, FUN = sd)
+  #      )
+  mu_nd =  apply(samps.j$mu_nd, MARGIN = 1:2, FUN = mean),
+  tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean)
+)
+#    names(dimnames(conc.param$lenp)) <- c("Fish","Metaparam")
+#    names(dimnames(conc.param$timep)) <- c("Dummy","Metaparam")
 
 conc.param <- melt(conc.param)
 colnames(conc.param)[colnames(conc.param)=="value"] <- "Result"
 colnames(conc.param)[colnames(conc.param)=="L1"] <- "Parameter"
+conc.param$Compound[conc.param$Parameter =="tau_nd"] <- conl_nd # drops out for some reason
 
 objects.store(conc.param)
 cat("Data frame conc.params stored.\n")
@@ -208,15 +219,19 @@ tmp <- eu2[eu2$Compound %in% c("PCDDF","PCB","BDE153","PBB153","PFOA","PFOS","DB
 ggplot(tmp, aes(x = eu2Result, colour=Fish))+stat_ecdf()+
   facet_wrap( ~ Compound, scales="free_x")+scale_x_log10()
 
-if(FALSE) {
-  scatterplotMatrix(t(exp(samps.j$pred[1,,,1])), main = "Predictions for all compounds for Baltic herring")
-  scatterplotMatrix(t(exp(samps.j$pred[,1,,1])), main = "Predictions for all fish species for PCDDF")
-  scatterplotMatrix(t(samps.j$Omega[,1,1,,1]))
-  #scatterplotMatrix(t(cbind(samps.j$Omega[1,1,1,,1],samps.j$mu[1,1,,1])))
-  
-  plot(coda.samples(jags, 'Omega', N))
-  plot(coda.samples(jags, 'mu', N))
-  plot(coda.samples(jags, 'lenp', N))
-  plot(coda.samples(jags, 'timep', N))
-  plot(coda.samples(jags, 'pred', N))
-}
+scatterplotMatrix(t(exp(samps.j$pred[2,,,1])), main = paste("Predictions for several compounds for",
+                                                            names(samps.j$pred[,1,1,1])[2]))
+scatterplotMatrix(t(exp(samps.j$pred[,1,,1])), main = paste("Predictions for all fish species for",
+                                                            names(samps.j$pred[1,,1,1])[1]))
+scatterplotMatrix(t(samps.j$Omega[2,,1,,1]), main = "Omega for several compounds in Baltic herring")
+
+scatterplotMatrix(t((samps.j$pred_nd[1,,,1])), main = paste("Predictions for several compounds for",
+                                                            names(samps.j$pred_nd[,1,1,1])[1]))
+
+#plot(coda.samples(jags, 'Omega', N))
+plot(coda.samples(jags, 'mu', N*thin, thin))
+#plot(coda.samples(jags, 'lenp', N))
+#plot(coda.samples(jags, 'timep', N))
+plot(coda.samples(jags, 'pred', N*thin, thin))
+plot(coda.samples(jags, 'mu_nd', N*thin, thin))
+tst <- (coda.samples(jags, 'pred', N))
