@@ -8,6 +8,19 @@ library(ggplot2)
 library(MASS) # mvrnorm
 library(car) # scatterplotMatrix
 
+#' Find the level of quantification for dinterval function
+#' @param df data.frame
+#' @return data.matrix
+add_loq <- function(df) {
+  LOQ <- unlist(lapply(df, FUN = function(x) min(x[x!=0], na.rm=TRUE))) 
+  out <- sapply(
+    1:length(LOQ),
+    FUN = function(x) ifelse(df[,x]==0, 0.5*LOQ[x], df[,x])
+  )
+  out <- data.matrix(out)
+  return(out)
+}
+
 #size <- Ovariable("size", ddata="Op_en7748", subset="Size distribution of fish species")
 #time <- Ovariable("time", data = data.frame(Result=2015))
 #conc_pcddf <- EvalOutput(conc_pcddf,verbose=TRUE)
@@ -43,7 +56,7 @@ colnames(eu3) <- gsub("eu2Result\\.","",colnames(eu3))
 conl_nd <- c("PFOA","PFOS","DBT","MBT","TBT","DPhT","TPhT")
 eu4 <- eu3[rowSums(is.na(eu3[conl_nd]))<7 , c(1:5,match(conl_nd,colnames(eu3)))]
 fisl_nd <- as.character(unique(eu4$Fish))
-conc_nd <- data.matrix(eu4[6:ncol(eu4)])
+conc_nd <- add_loq(eu4[6:ncol(eu4)])
 
 eu3 <- eu3[!is.na(eu3$PCDDF) , !colnames(eu3) %in% conl_nd]
 conl <- colnames(eu3)[-(1:5)]
@@ -53,25 +66,13 @@ oprint(head(eu3))
 
 C <- length(conl)
 Fi <- length(fisl)
-N <- 1000
+N <- 100
 conl
 fisl
 
-conc <- eu3[6:ncol(eu3)]
+conc <- add_loq(eu3[rowSums(is.na(eu3))==0 , 6:ncol(eu3)]) # Remove rows with missing data.
 
-# Find the level of quantification for dinterval function
-LOQ <- unlist(lapply(eu3[6:ncol(eu3)], FUN = function(x) min(x[x!=0], na.rm=TRUE))) 
-# With TEQ, there are no zeros. So this is useful only if there are congener-specific results.
-#names(LOQ) <- conl
-
-
-conc <- sapply(
-  1:length(LOQ),
-  FUN = function(x) ifelse(is.na(conc[,x]) | conc[,x]==0, 0.5*LOQ[x], conc[,x])
-)
-conc <- data.matrix(conc)
-
-# It assumes that all fish groups have the same Omega but mu varies.
+# The model assumes that all fish groups have the same Omega but mu varies.
 
 mod <- textConnection(
   "
@@ -83,8 +84,8 @@ mod <- textConnection(
     }
     for(i in 1:S_nd) {
       for(j in 1:C_nd) {
-        conc[i,j] ~ dnorm(muind_nd[i,], tau_nd[fis_nd[i],])
-        muind[i,j] <- mu[fis_nd[i],j] #+ lenp[fis[i]]*length[i] + timep*year[i]
+        conc_nd[i,j] ~ dnorm(muind_nd[i,j], tau_nd[j])
+        muind_nd[i,j] <- mu_nd[fis_nd[i],j] #+ lenp[fis[i]]*length[i] + timep*year[i]
       }
     }
     
@@ -105,26 +106,28 @@ mod <- textConnection(
     }
     # Non-dioxins
     for(i in 1:Fi_nd) { # Fi = fish species
-      tau_nd[i] ~ dgamma(0.001,0.001)
       for(j in 1:C_nd) {
-        pred_[i,j] ~ dnorm(mu[i,j], tau[i])
-        mu[i,j] ~ dnorm(0, 0.0001)
+        pred_nd[i,j] ~ dnorm(mu[i,j], tau_nd[j])
+        mu_nd[i,j] ~ dnorm(0, 0.0001)
       }
     }
+    for(j in 1:C_nd) {
+      tau_nd[j] ~ dgamma(0.001,0.001)
+    }
   }
-  ")
+")
 
 jags <- jags.model(
   mod,
   data = list(
-    S = nrow(eu3),
-    S_nd = nrow(eu4),
+    S = nrow(conc),
+    S_nd = nrow(conc_nd),
     C = C,
-    C_nd = length(conc_nd),
+    C_nd = ncol(conc_nd),
     Fi = Fi,
     Fi_nd = length(fisl_nd),
     conc = log(conc),
-    conc_nd = conc_nd,
+    conc_nd = log(conc_nd),
     #    length = eu3$Length-170, # Subtract average herring size
     #    year = eu3$Year-2009, # Substract baseline year
     fis = match(eu3$Fish, fisl),
@@ -146,7 +149,10 @@ samps.j <- jags.samples(
     'Omega', # precision matrix by compound
     #    'lenp',# parameters for length
     #    'timep', # parameter for Year
-    'pred' # predicted concentration for year 2009 and length 17 cm
+    'pred', # predicted concentration for year 2009 and length 17 cm
+    'pred_nd',
+    'mu_nd',
+    'tau_nd'
   ), 
   #  thin=1000,
   N
@@ -155,39 +161,36 @@ dimnames(samps.j$Omega) <- list(Fish = fisl, Compound = conl, Compound2 = conl, 
 dimnames(samps.j$mu) <- list(Fish = fisl, Compound = conl, Iter = 1:N, Chain = 1:4)
 #dimnames(samps.j$lenp) <- list(Fish = fisl, Iter = 1:N, Chain = 1:4)
 dimnames(samps.j$pred) <- list(Fish = fisl, Compound = conl, Iter = 1:N, Chain = 1:4)
+dimnames(samps.j$pred_nd) <- list(Fish = fisl_nd, Compound = conl_nd, Iter = 1:N, Chain = 1:4)
+dimnames(samps.j$mu_nd) <- list(Fish = fisl_nd, Compound = conl_nd, Iter = 1:N, Chain = 1:4)
+dimnames(samps.j$tau_nd) <- list(Compound = conl_nd, Iter = 1:N, Chain = 1:4)
 #dimnames(samps.j$timep) <- list(Dummy = "time", Iter = 1:N, Chain = 1:4)
 
 ##### conc.param contains expected values of the distribution parameters from the model
 
-conc.param <- Ovariable(
-  "conc.param",
-  dependencies = data.frame(Name = "samps.j", Ident=NA),
-  formula = function(...) {
-    conc.param <- list(
-      Omega = apply(samps.j$Omega, MARGIN = 1:3, FUN = mean),
-      #      lenp = cbind(
-      #        mean = apply(samps.j$lenp, MARGIN = 1, FUN = mean),
-      #        sd = apply(samps.j$lenp, MARGIN = 1, FUN = sd)
-      #      ),
-      mu = apply(samps.j$mu, MARGIN = 1:2, FUN = mean)#,
-      #      timep = cbind(
-      #        mean = apply(samps.j$timep, MARGIN = 1, FUN = mean),
-      #        sd = apply(samps.j$timep, MARGIN = 1, FUN = sd)
-      #      )
-    )
-    #    names(dimnames(conc.param$lenp)) <- c("Fish","Metaparam")
-    #    names(dimnames(conc.param$timep)) <- c("Dummy","Metaparam")
-    conc.param <- melt(conc.param)
-    colnames(conc.param)[colnames(conc.param)=="value"] <- "Result"
-    colnames(conc.param)[colnames(conc.param)=="L1"] <- "Parameter"
-    conc.param$Dummy <- NULL
-    #    conc.param$Metaparam <- ifelse(is.na(conc.param$Metaparam), conc.param$Parameter, as.character(conc.param$Metaparam))
-    return(Ovariable(output=conc.param, marginal=colnames(conc.param)!="Result"))
-  }
-)
+conc.param <- list(
+    Omega = apply(samps.j$Omega, MARGIN = 1:3, FUN = mean),
+    #      lenp = cbind(
+    #        mean = apply(samps.j$lenp, MARGIN = 1, FUN = mean),
+    #        sd = apply(samps.j$lenp, MARGIN = 1, FUN = sd)
+    #      ),
+    mu = apply(samps.j$mu, MARGIN = 1:2, FUN = mean),
+    #      timep = cbind(
+    #        mean = apply(samps.j$timep, MARGIN = 1, FUN = mean),
+    #        sd = apply(samps.j$timep, MARGIN = 1, FUN = sd)
+    #      )
+    mu_nd =  apply(samps.j$mu_nd, MARGIN = 1:2, FUN = mean),
+    tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean)
+  )
+  #    names(dimnames(conc.param$lenp)) <- c("Fish","Metaparam")
+  #    names(dimnames(conc.param$timep)) <- c("Dummy","Metaparam")
 
-objects.store(conc.param, samps.j)
-cat("Lists conc.params and samps.j stored.\n")
+conc.param <- melt(conc.param)
+colnames(conc.param)[colnames(conc.param)=="value"] <- "Result"
+colnames(conc.param)[colnames(conc.param)=="L1"] <- "Parameter"
+
+objects.store(conc.param)
+cat("Data frame conc.params stored.\n")
 
 ######################3
 
@@ -204,8 +207,6 @@ cat("Descriptive statistics:\n")
 tmp <- eu2[eu2$Compound %in% c("PCDDF","PCB","BDE153","PBB153","PFOA","PFOS","DBT","MBT","TBT"),]@output
 ggplot(tmp, aes(x = eu2Result, colour=Fish))+stat_ecdf()+
   facet_wrap( ~ Compound, scales="free_x")+scale_x_log10()
-
-conc.param <- EvalOutput(conc.param)
 
 if(FALSE) {
   scatterplotMatrix(t(exp(samps.j$pred[1,,,1])), main = "Predictions for all compounds for Baltic herring")
