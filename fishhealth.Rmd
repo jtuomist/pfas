@@ -1,10 +1,10 @@
 ---
 title: "Fish and health with national fish promotion programme: model run and results"
 author: "Jouni Tuomisto"
-date: "03 03 2021"
+date: "07 03 2021"
 output: html_document
 params:
-  N: 500
+  N: 200
   porvoo: FALSE
 ---
 ## Shortcut to model download
@@ -12,6 +12,14 @@ params:
 This is an open assessment looking at potential health effects of a national fish promotion program in Finland. The details of the assessment are described at [Opasnet](http://fi.opasnet.org/fi/PFAS-yhdisteiden tautitaakka). This file contains the R code to run the assessment model.
 
 This code downloads all the ovariables created by the previous code, fishhealth_initiate.Rmd, runs the model and plots various graphs and tables about the results.
+
+Fix these problems:
+
+2. Calculate total personal BoD for individuals in Porvoo and Vanhankaupunginlahti. Do not compare those at the (Finnish) population level.
+3. Correct the fish intake distribution to manage dimension Fishing correctly.
+4. Check that all oapply NA-fillings are intended.
+5. Correct the "Kalansyönti Suomessa keskimäärin" figure.
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE) 
@@ -23,6 +31,12 @@ library(readxl)
 library(reshape2)
 
 openv.setN(params$N)
+
+trim <- function(ova) {
+  if("Exposcen" %in% colnames(ova)) ova <- ova[ova$Exposcen=="BAU",]
+  ova <- oapply(ova,NULL,mean,"Iter")@output
+  return(ova)
+}
 
 ```
 
@@ -41,7 +55,7 @@ BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
 ```
 
 ```{r summary tables}
-if(FALSE) {
+
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoD,marginals=c("Gender","Response"),"mean"))
@@ -61,7 +75,7 @@ oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
 oprint(summary(RR,"mean"))
-}
+
 
 ```
 
@@ -89,6 +103,20 @@ p <- ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
     print(p)
     ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
   }
+
+tmp <- oapply(amount,NULL,sum,"Fish")@output
+head(tmp)
+p <- ggplot(tmp, aes(x=amountResult+1, colour=Group))+stat_ecdf()+
+  scale_x_log10()+
+  coord_cartesian(xlim=c(3,300))+
+  labs(
+    title="Kalansyönti väestössä",
+    x="Kalansyönti (g päivässä)",
+    y="Kumulatiivinen todennäköisyysjakauma"
+  )
+if(params$porvoo) p <- p + facet_grid(Fishing~.)
+p
+ggsave("Kalansyönnin jakauma Suomessa.svg")
 
 plot_ly(trim(EvalOutput(total_amount)), x=~Kala, y=~total_amountResult, color=~Kala, type="bar") %>%
   layout(yaxis=list(title="Kalan kokonaiskulutus Suomessa (milj kg /a)"), barmode="stack")
@@ -120,9 +148,10 @@ limits <- data.frame(
   Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
 )
 
-tmp <- EvalOutput(expo_dir, verbose=TRUE) # Calculated again because we want Group which is collapsed
+tmp <- EvalOutput(expo_dir, verbose=TRUE) # Calculated again because we want Group, which is collapsed
 tmp <- oapply(tmp,NULL,sum,c("Fish","fish_proportionSource","amountSource","concSource"))
-tmp <- tmp[tmp$Exposcen=="BAU" & !tmp$Exposure_agent %in% c("ALA", "EPA"),]
+tmp <- oapply(tmp,NULL,mean,"Scaling")
+tmp <- tmp[tmp$Exposcen=="BAU" & !tmp$Exposure_agent %in% c("ALA", "EPA") ,]
 tmp$Group <- factor(tmp$Group, levels=c("Toddlers","Other children","Adolescents","Adults","Elderly"))
 if(params$porvoo) {
   tmp <- tmp[tmp$Exposure_agent=="PFAS",] 

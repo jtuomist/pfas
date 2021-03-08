@@ -60,6 +60,8 @@ What has been done for PFAS assessment?
 43. Pike is missing from amount although it is an important source of MeHg. Solution: do nothing. DONE
 44. All salmonids inherit the concentrations from Baltic salmon. Solution: Do nothing, wait for the grand Bayesian model. DONE
 45. Porvoo and Vanhankaupungilahti should not affect concentrations of fish from other areas. Add higher concentrations to conc using a decision. Add local fish to amount using Inpamount with dimensions Fish and Fishing (with BAU 0 g/d). Correct Fishing locations will be added with oapply. DONE.
+46. Fraction of zero PFAS exposure is too high (around 75 %). Should be close to 50 %. Solution: the fish species adjustment has to be moved from expo_dir to amount. DONE
+
 
 Should still be done:
 
@@ -85,39 +87,8 @@ ages <- factor(1:19, labels=c(
     "55 - 59", "60 - 64", "65 - 69", "70 - 74", "75 - 79", "80 - 84", "85+", "Undefined")
 )
 
-objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping
-
-#' prepare adjusts the data table for ovariables. Requires function subgrouping from code Op_en2031/subgrouping on page [[Exposure-response function]]
-#' @param dat data.frame
-#' @param type type of data that is used. Must match content in column Type
-#' @param drop columns to remove
-#' @return data.frame
-prepare <- function(dat, type=NULL, drop=NULL) {
-  out <- dat
-  if(!is.null(type)) out <- out[out$Type %in% type , ]
-  if(!is.null(drop)) out <- out[!colnames(out) %in% drop]
-  return(subgrouping(out))
-}
-
-#' Copies results from one location to other locations while keeping everything else constant
-#' @param ova ovariable to be used
-#' @param locations list of relevant indices. Each item is a list that has a name of an existing locations, and the content is a vector of new location names.
-#' @return the input ovariable with new rows containing the new locations
-
-expand_index <- function(ova, locations) {
-  if("ovariable" %in% class(ova)) out <- ova@output else out <- ova
-  for(i in names(locations)) {
-    for(j in names(locations[[i]])) {
-      addpiece <- out[out[[i]]==j,]
-      for(k in locations[[i]][[j]]) {
-        addpiece[[i]] <- k
-        out <- rbind(out,addpiece)
-      }
-    }
-  }
-  if("ovariable" %in% class(ova)) ova@output <- out else ova <- out
-  return(ova)
-}
+objects.latest("Op_en2031", code_name="subgrouping") # [[Exposure-response function]] subgrouping, prepare
+objects.latest("Op_en6007", code_name="expand_index") # [[OpasnetUtils/Drafts]] expand_index
 
 trim <- function(ova) return(oapply(ova, NULL, mean, "Iter")@output)
 
@@ -163,6 +134,7 @@ objects.latest("Op_en1836", code_name="EFSA_amount") #  [[Domestic fish consumpt
 amountOrig <- amount@formula
 amount@formula <- function(...) {
   out <- amountOrig()
+  out$Fish[out$Fish %in% c("Imported fish","Fish product","Tuna")] <- "Average fish"
   out <- out * fish_proportion
   return(out)
 }
@@ -342,7 +314,7 @@ conc <- Ovariable(
 )
 
 ###################################################################
-# Code copied from http://en.opasnet.org/w/Goherr_assessment#
+# Code originally from http://en.opasnet.org/w/Goherr_assessment#
 
 mc2dparam<- list(
   N2 = 10, # Number of iterations in the new Iter
@@ -360,55 +332,23 @@ expo_background <- Ovariable(
   unit = "Vitamin D: µg /day; DHA, EPA, Omega3: mg /day"
 )
 
-expo_dir <- Ovariable(
-  "expo_dir",
-  dependencies=data.frame(Name=c("amount","conc","expo_background")),
-  formula = function(...) {
-    amount$Fish[amount$Fish %in% c("Imported fish","Fish product","Tuna")] <- "Average fish"
-    amount <- amount * Ovariable(output=data.frame(
+objects.latest("Op_en2261", code_name="expo_dir") # [[Health impact assessment]] # expo_dir
+
+expo_dirOrig <- expo_dir@formula
+
+expo_dir@formula <- function(...) {
+  out <- expo_dirOrig()
+  out <- out * Ovariable(output=data.frame(
       Age = ages[-19],
       Group = c("Toddlers","Other children",rep("Adolescents",2), rep("Adults",9), rep("Elderly",5)),
       Result = 1
     ),
     marginal=c(TRUE,TRUE,FALSE))
-    out <- amount * conc * Ovariable(
-      output = data.frame(Exposcen = c("BAU","No exposure"), Result=c(1,0)), marginal=c(TRUE,FALSE))
-    colnames(out@output)[colnames(out@output)=="Compound"] <- "Exposure_agent"
-    out <- OpasnetUtils::combine(out, expo_background)
     return(out)
-  },
-  unit = "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
-)
-#expo_dir <- EvalOutput(expo_dir, verbose=TRUE)
+}
+expo_dir@meta$unit <- "PCDDF, PCB, TEQ: pg /day; Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 
-exposure <- Ovariable(
-  "exposure",
-  dependencies = data.frame(
-    Name = c(
-      "expo_dir", # direct exposure, i.e. the person eats or breaths the exposure agent themself
-      "expo_indir", # indirect exposure, i.e. the person (typically fetus or infant) is exposed via someone else (mother)
-      "mc2d" # 2D Monte Carlo function
-    ),
-    Ident = c(
-      NA,
-      "Op_en7797/expo_indir2", # [[Infant's dioxin exposure]] # expo_indir
-      "Op_en7805/mc2d") # [[Two-dimensional Monte Carlo]]
-  ),
-  formula = function(...) {
-    expo_indir <- expo_indir[expo_indir$Gender =="Female",] # Age must be selected too, if available, and then collapsed if >1 location.
-    expo_indir$Gender <- NULL
-    expo_indir <- expo_indir[expo_indir$Age %in% c("20 - 24","25 - 29", "30 - 34", "35 - 39", "40 - 44"),]
-    expo_indir <- CollapseMarginal(expo_indir, "Age", "mean") # "sample" is not possible if openv$N==0
-    expo_indir$Age <- "0 - 4"
-    
-    expo_dir$Exposure <- "Direct"
-    
-    out <- OpasnetUtils::combine(expo_dir, expo_indir)
-    out <- mc2d(out)
-    return(out)
-  },
-  unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
-)
+#   exposure@meta$unit = "PCDDF, PCB, TEQ: (To eater: pg /day; to child: pg /g fat); Vitamin D, MeHg: µg /day; DHA, EPA, Omega3: mg /day"
 
 ##########################3
 
