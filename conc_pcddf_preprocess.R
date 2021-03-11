@@ -176,9 +176,9 @@ dimnames(samps.j$mu_nd) <- list(Fish = fisl_nd, Compound = conl_nd, Iter = 1:N, 
 dimnames(samps.j$tau_nd) <- list(Compound = conl_nd, Iter = 1:N, Chain = 1:4)
 #dimnames(samps.j$timep) <- list(Dummy = "time", Iter = 1:N, Chain = 1:4)
 
-##### conc.param contains expected values of the distribution parameters from the model
+##### conc_param contains expected values of the distribution parameters from the model
 
-conc.param <- list(
+conc_param <- list(
   Omega = apply(samps.j$Omega, MARGIN = 1:3, FUN = mean),
   #      lenp = cbind(
   #        mean = apply(samps.j$lenp, MARGIN = 1, FUN = mean),
@@ -192,16 +192,21 @@ conc.param <- list(
   mu_nd =  apply(samps.j$mu_nd, MARGIN = 1:2, FUN = mean),
   tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean)
 )
-#    names(dimnames(conc.param$lenp)) <- c("Fish","Metaparam")
-#    names(dimnames(conc.param$timep)) <- c("Dummy","Metaparam")
+#    names(dimnames(conc_param$lenp)) <- c("Fish","Metaparam")
+#    names(dimnames(conc_param$timep)) <- c("Dummy","Metaparam")
 
-conc.param <- melt(conc.param)
-colnames(conc.param)[colnames(conc.param)=="value"] <- "Result"
-colnames(conc.param)[colnames(conc.param)=="L1"] <- "Parameter"
-conc.param$Compound[conc.param$Parameter =="tau_nd"] <- conl_nd # drops out for some reason
+conc_param <- melt(conc_param)
+colnames(conc_param)[colnames(conc_param)=="value"] <- "Result"
+colnames(conc_param)[colnames(conc_param)=="L1"] <- "Parameter"
+conc_param$Compound[conc_param$Parameter =="tau_nd"] <- conl_nd # drops out for some reason
+conc_param <- fillna(conc_param,"Fish")
+for(i in 1:ncol(conc_param)) {
+  if("factor" %in% class(conc_param[[i]])) conc_param[[i]] <- as.character(conc_param[[i]])
+}
+conc_param <- Ovariable("conc_param",data=conc_param)
 
-objects.store(conc.param)
-cat("Data frame conc.params stored.\n")
+objects.store(conc_param)
+cat("Data frame conc_params stored.\n")
 
 ######################3
 
