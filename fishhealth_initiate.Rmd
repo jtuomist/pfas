@@ -363,7 +363,7 @@ objects.latest("Op_en6007", code_name="diagnostics")
 oprint(showLoctable())
 oprint(showind())
 
-limits <- data.frame(
+limits <- data.frame( 
   Exposure_agent = c("TEQ","MeHg","PFAS","Vitamin D"),
   Type = c("TDI","TDI","TDI","RDI"),
   Result = c(2*70/7, 1.3*70/7,4.4*70/7,10)
