@@ -2,8 +2,6 @@
 
 library(OpasnetUtils)
 
-#objects.latest("Op_en3104", code_name="pollutant_bayes")
-
 conc_poll <- Ovariable(
   "conc_poll",
   dependencies = data.frame(
@@ -73,6 +71,3 @@ conc_poll <- Ovariable(
 
 objects.store(conc_poll)
 cat("Ovariable conc_poll stored.\n")
-
-ggplot(conc_pfas@output, aes(x=conc_pfasResult,colour=Fish))+stat_ecdf()+
-  facet_wrap(~Compound, scales="free_x")+scale_x_log10()

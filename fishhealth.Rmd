@@ -19,6 +19,9 @@ Fix these problems:
 3. Correct the fish intake distribution to manage dimension Fishing correctly.
 4. Check that all oapply NA-fillings are intended.
 5. Correct the "Kalansyönti Suomessa keskimäärin" figure.
+6. PFOS, PFAS: ug/g --> ng/g DONE
+7. PFAS: separate Porvoo from other regions.
+8. NOTE! Salmon concentrations include farmed salmon at the moment. This is OK for health impact assessment. DONE
 
 
 ```{r setup, include=FALSE}

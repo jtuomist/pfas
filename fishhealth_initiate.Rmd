@@ -259,28 +259,6 @@ conc_eukalat <- EvalOutput(Ovariable(
   unit="ng/g fresh weight"
 ))
 
-conc_pfas_raw <- Ovariable(
-  "conc_pfas_raw",
-  ddata="Op_fi5932",subset="PFAS concentrations",
-  unit="ng/g f.w.")
-
-conc_pfas <- Ovariable(
-  "conc_pfas",
-  dependencies = data.frame(Name="conc_pfas_raw"),
-  formula = function(...) {
-    out <- conc_pfas_raw
-    out$Source <- NULL
-    out$Area <- "Porvoo"
-    out <- expand_index(out, list(Fish=list(Perch=c(
-      "Average fish", "Pike","Rainbow trout","Roach", "Salmon", "Vendace", "Whitefish"))))
-    out <- out[sample(nrow(out@output)),]
-    out <- out[!duplicated(out@output[intersect(colnames(out@output),c("Fish","Compound","Iter"))]),]
-    out@marginal <- c(TRUE, TRUE, FALSE, TRUE, TRUE)
-    return(out)
-  },
-  unit="ng/g fresh weight"
-)
-
 #sum_pfas <- oapply(conc_pfas, cols=c("Kala","Compound"), FUN=sum)
 #tmp <- conc_pfas / sum_pfas
 #summary(tmp, marginals="Compound")
@@ -289,28 +267,30 @@ conc_pfas <- Ovariable(
 # 0 - 10 %, 2 - 18 %, and 0 - 9 %, respectively.
 # Even if we included the next most abundant congeners, i.e. PFDA and PFUnA, the overall picture would not change.
 
-objects.latest("Op_en3104", code_name="conc_poll") # [[EU-kalat]] conc_poll contains e.g. TEQ, PFAS.
-
 conc <- Ovariable(
   "conc",
   dependencies = data.frame(
-    Name=c("conc_vit", "conc_pfas","conc_pcddf","conc_mehg"),
-    Ident = c(NA,NA,"Op_en3104/pcddf_mean","Op_en4004/conc_mehg_allfish")),
+    Name=c(
+      "conc_vit", # [[Concentrations of beneficial nutrients in fish]]
+      "conc_poll", # [[EU-kalat]], contains e.g. TEQ, PFAS
+      "conc_mehg"), # [[Mercury concentrations in fish in Finland]]
+    Ident = c(NA,"Op_en3104/conc_poll","Op_en4004/conc_mehg_allfish")),
   formula = function(...){
     conc_vit <- oapply(conc_vit, cols=c("Kala", "Adjust"),FUN=mean)
     colnames(conc_vit@output)[colnames(conc_vit@output)=="Nutrient"] <- "Compound"
+    
+    conc_pfas <- expand_index(
+      conc_poll[conc_poll$Compound %in% c("PFAS","PFOS"),],
+      list(Fish=list(Perch=c("Average fish", "Pike","Rainbow trout", "Vendace"))))
+    
+    conc_pcddf <- conc_poll[!conc_poll$Compound %in% c("PFAS","PFOS"),]
 
-#    conc_pfas <- oapply(conc_pfas, cols=c("Obs","Area"), FUN=mean) # Redundant because handled already
-    conc_pfas$Compound[conc_pfas$Compound %in% c("PFOA","PFNA","PFHxS","PFOS")] <- "PFAS"
-    conc_pfas <- oapply(conc_pfas, cols="Area", FUN=sum) # Works because only one area
-    
-    conc_pcddf$Compound <- "TEQ"
-    conc_pcddf$Fish <- ifelse(conc_pcddf$Fish=="Baltic herring", "Herring", as.character(conc_pcddf$Fish))
-    
     conc_mehg <- oapply(conc_mehg[conc_mehg$Area=="Gulf of Finland",], NULL, mean, c("Area","Kala"))
     conc_mehg$Compound <- "MeHg"
     
     out <- OpasnetUtils::combine(conc_vit, conc_pfas, conc_pcddf, conc_mehg)
+    out$Fish <- ifelse(out$Fish=="Baltic herring", "Herring", as.character(out$Fish))
+
     return(out)
   }
 )
