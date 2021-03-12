@@ -11,7 +11,7 @@ library(car) # scatterplotMatrix
 #' Find the level of quantification for dinterval function
 #' @param df data.frame
 #' @return data.matrix
-add_loq <- function(df) {
+add_loq <- function(df) { # This should reflect the fraction of observations below LOQ.
   LOQ <- unlist(lapply(df, FUN = function(x) min(x[x!=0], na.rm=TRUE))) 
   out <- sapply(
     1:length(LOQ),
@@ -23,12 +23,8 @@ add_loq <- function(df) {
 
 #size <- Ovariable("size", ddata="Op_en7748", subset="Size distribution of fish species")
 #time <- Ovariable("time", data = data.frame(Result=2015))
-#conc_pcddf <- EvalOutput(conc_pcddf,verbose=TRUE)
-#View(conc_pcddf@output)
 
-objects.latest("Op_en3104", code_name = "preprocess") # [[EU-kalat]] eu, eu2, euRatio, indices
-
-eu2 <- EvalOutput(eu2)
+objects.latest("Op_en3104", code_name = "preprocess2") # [[EU-kalat]] euw
 
 # Hierarchical Bayes model.
 
@@ -40,20 +36,9 @@ eu2 <- EvalOutput(eu2)
 # zero effect for other fish than Baltic herring.
 # Catchment year affects all species similarly. 
 
-eu2 <- eu2[!eu2$Compound %in% c("MPhT","DOT","BDE138"),] # No values > 0
+euw <- euw[!colnames(euw) %in% c("MPhT","DOT","BDE138")] # No values > 0
 
-eu3 <- eu2[eu2$Matrix == "Muscle" , ]@output
-eu3 <- reshape( 
-  eu3, 
-  v.names = "eu2Result", 
-  idvar = c("THLcode", "Fish"),
-  timevar = "Compound", 
-  drop = c("Matrix","eu2Source"), 
-  direction = "wide"
-)
-colnames(eu3) <- gsub("eu2Result\\.","",colnames(eu3))
-eu3$TEQ <- eu3$PCDDF + eu3$PCB
-eu3$PFAS <- eu3$PFOA + eu3$PFOS
+eu3 <- euw[euw$Matrix == "Muscle" , ]
 
 #conl_nd <- c("PFAS","PFOA","PFOS","DBT","MBT","TBT","DPhT","TPhT")
 conl_nd <- c("PFAS","PFOS","TBT")
@@ -206,7 +191,7 @@ for(i in 1:ncol(conc_param)) {
 conc_param <- Ovariable("conc_param",data=conc_param)
 
 objects.store(conc_param)
-cat("Data frame conc_params stored.\n")
+cat("Ovariable conc_params stored.\n")
 
 ######################3
 
@@ -220,9 +205,9 @@ cat("Descriptive statistics:\n")
 #  function_names = c("mean", "sd")
 #))
 
-tmp <- eu2[eu2$Compound %in% c("PCDDF","PCB","BDE153","PBB153","PFOA","PFOS","DBT","MBT","TBT"),]@output
-ggplot(tmp, aes(x = eu2Result, colour=Fish))+stat_ecdf()+
-  facet_wrap( ~ Compound, scales="free_x")+scale_x_log10()
+#tmp <- euw[euw$Compound %in% c("PCDDF","PCB","BDE153","PBB153","PFOA","PFOS","DBT","MBT","TBT"),]
+#ggplot(tmp, aes(x = eu2Result, colour=Fish))+stat_ecdf()+
+#  facet_wrap( ~ Compound, scales="free_x")+scale_x_log10()
 
 scatterplotMatrix(t(exp(samps.j$pred[2,,,1])), main = paste("Predictions for several compounds for",
                                                             names(samps.j$pred[,1,1,1])[2]))

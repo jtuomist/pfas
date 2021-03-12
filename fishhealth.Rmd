@@ -1,5 +1,5 @@
 ---
-title: "Fish and health with national fish promotion programme: model run and results"
+title: "Fish and health in Finland and Porvoo: results with special focus on PFAS compounds"
 author: "Jouni Tuomisto"
 date: "07 03 2021"
 output: html_document
@@ -9,7 +9,7 @@ params:
 ---
 ## Shortcut to model download
 
-This is an open assessment looking at potential health effects of a national fish promotion program in Finland. The details of the assessment are described at [Opasnet](http://fi.opasnet.org/fi/PFAS-yhdisteiden tautitaakka). This file contains the R code to run the assessment model.
+This is an open assessment looking at health effects of fish consumption in Finland. The details of the assessment are described at [Opasnet](http://fi.opasnet.org/fi/PFAS-yhdisteiden tautitaakka). This file contains the R code to run the assessment model.
 
 This code downloads all the ovariables created by the previous code, fishhealth_initiate.Rmd, runs the model and plots various graphs and tables about the results.
 

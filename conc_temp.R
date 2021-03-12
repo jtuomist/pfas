@@ -21,8 +21,11 @@ conc_poll <- Ovariable(
     tmp3 <- merge(tmp2,tmp1@output)
     out <- data.frame()
     for(i in 1:nrow(tmp2)) {
+      
+      ############## PCDDF (with multivariate mvnorm)
+      
       tmp <- tmp3[tmp3$Row == i , ]
-      Omega <- solve(tapply( # Is it sure that PCDDF and PCB are not mixed to wrong order?
+      Omega <- solve(tapply(
         tmp$conc_paramResult[tmp$Parameter=="Omega"],
         tmp[tmp$Parameter=="Omega", c("Compound","Compound2")],
         sum # Equal to identity because only 1 row per cell.
@@ -41,6 +44,17 @@ conc_poll <- Ovariable(
       
       rnd <- exp(mvrnorm(1, mu, Omega))
       out <- rbind(out, merge(tmp2[i,], data.frame(Compound=con,Result=rnd)))
+      
+      #################### PFAS etc (with univariate norm)
+      con <- tmp$Compound[tmp$Parameter=="mu_nd"]
+      mu <- tmp$conc_paramResult[tmp$Parameter=="mu_nd"]
+      tau <- tmp$conc_paramResult[tmp$Parameter=="tau_nd"][match(con,tmp$Compound[tmp$Parameter=="tau_nd"])]
+      for(j in 1:length(con)) {
+        rnd <- exp(rnorm(1,mu[j],tau[j]))
+        out <- rbind(out,
+                     data.frame(tmp2[i,],Compound = con[j],Result = rnd)
+                     )
+      }
     }
     out$Row <- NULL
 #    temp <- aggregate(
@@ -59,3 +73,6 @@ conc_poll <- Ovariable(
 
 objects.store(conc_poll)
 cat("Ovariable conc_poll stored.\n")
+
+ggplot(conc_pfas@output, aes(x=conc_pfasResult,colour=Fish))+stat_ecdf()+
+  facet_wrap(~Compound, scales="free_x")+scale_x_log10()
