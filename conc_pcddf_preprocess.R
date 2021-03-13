@@ -36,24 +36,24 @@ objects.latest("Op_en3104", code_name = "preprocess2") # [[EU-kalat]] euw
 # zero effect for other fish than Baltic herring.
 # Catchment year affects all species similarly. 
 
-euw <- euw[!colnames(euw) %in% c("MPhT","DOT","BDE138")] # No values > 0
+eu3 <- euw[!colnames(euw) %in% c("MPhT","DOT","BDE138")] # No values > 0
 
-eu3 <- euw[euw$Matrix == "Muscle" , ]
+eu3 <- eu3[eu3$Matrix == "Muscle" , ]
+eu3$Locat <- ifelse(eu3$Location=="Porvoo",2,
+                       ifelse(eu3$Location=="Helsinki, Vanhankaupunginlahti Bay",3,1))
+locl <- c("Finland","Porvoo","Helsinki")
 
 #conl_nd <- c("PFAS","PFOA","PFOS","DBT","MBT","TBT","DPhT","TPhT")
-conl_nd <- c("PFAS","PFOS","TBT")
+conl_nd <- c("PFAS","PFOS") # TBT would drop Porvoo measurements
 fisl <- fisl_nd <- c("Baltic herring","Bream","Flounder","Perch","Roach","Salmon","Whitefish")
 
 eu4 <- eu3[rowSums(is.na(eu3[conl_nd]))<length(conl_nd) & eu3$Fish %in% fisl_nd ,
-           c(1:5,match(conl_nd,colnames(eu3)))]
-#fisl_nd <- as.character(unique(eu4$Fish))
+           c(1:5,match(c("Locat",conl_nd),colnames(eu3)))]
 
-conc_nd <- add_loq(eu4[eu4$Fish %in% fisl_nd , 6:ncol(eu4)])
+conc_nd <- add_loq(eu4[conl_nd])
 
 conl <- c("TEQ","PCDDF","PCB") # setdiff(colnames(eu3)[-(1:5)], conl_nd)
 eu3 <- eu3[!is.na(eu3$PCDDF) & eu3$Fish %in% fisl , c(1:5, match(conl,colnames(eu3)))]
-#conl <- colnames(eu3)[-(1:5)]
-#fisl <- as.character(unique(eu3$Fish))
 
 oprint(head(eu3))
 oprint(head(eu4))
@@ -67,7 +67,8 @@ fisl
 conl_nd
 fisl_nd
 
-conc <- add_loq(eu3[rowSums(is.na(eu3))==0 , 6:ncol(eu3)]) # Remove rows with missing data.
+eu3 <- eu3[rowSums(is.na(eu3))==0,]
+conc <- add_loq(eu3[conl]) # Remove rows with missing data.
 
 # The model assumes that all fish groups have the same Omega but mu varies.
 
@@ -82,7 +83,7 @@ mod <- textConnection(
     for(i in 1:S_nd) {
       for(j in 1:C_nd) {
         conc_nd[i,j] ~ dnorm(muind_nd[i,j], tau_nd[j])
-        muind_nd[i,j] <- mu_nd[fis_nd[i],j] #+ lenp[fis[i]]*length[i] + timep*year[i]
+        muind_nd[i,j] <- mu_nd[fis_nd[i],j] + mulocat[locat[i]] #+ lenp[fis[i]]*length[i] + timep*year[i]
       }
     }
     
@@ -102,6 +103,9 @@ mod <- textConnection(
       }
     }
     # Non-dioxins
+    mulocat[1] <- 0
+    mulocat[2] ~ dnorm(0,0.001)
+    mulocat[3] ~ dnorm(0,0.001)
     for(j in 1:C_nd) {
       tau_nd[j] ~ dgamma(0.001,0.001)
       for(i in 1:Fi_nd) { # Fi = fish species
@@ -123,6 +127,7 @@ jags <- jags.model(
     Fi_nd = length(fisl_nd),
     conc = log(conc),
     conc_nd = log(conc_nd),
+    locat = eu4$Locat,
     #    length = eu3$Length-170, # Subtract average herring size
     #    year = eu3$Year-2009, # Substract baseline year
     fis = match(eu3$Fish, fisl),
@@ -147,7 +152,8 @@ samps.j <- jags.samples(
     'pred', # predicted concentration for year 2009 and length 17 cm
     'pred_nd',
     'mu_nd',
-    'tau_nd'
+    'tau_nd',
+    'mulocat'
   ), 
   thin=thin,
   N*thin
@@ -160,6 +166,7 @@ dimnames(samps.j$pred_nd) <- list(Fish = fisl_nd, Compound = conl_nd, Iter = 1:N
 dimnames(samps.j$mu_nd) <- list(Fish = fisl_nd, Compound = conl_nd, Iter = 1:N, Chain = 1:4)
 dimnames(samps.j$tau_nd) <- list(Compound = conl_nd, Iter = 1:N, Chain = 1:4)
 #dimnames(samps.j$timep) <- list(Dummy = "time", Iter = 1:N, Chain = 1:4)
+dimnames(samps.j$mulocat) <- list(Area = locl, Iter = 1:N, Chain = 1:4)
 
 ##### conc_param contains expected values of the distribution parameters from the model
 
@@ -175,7 +182,8 @@ conc_param <- list(
   #        sd = apply(samps.j$timep, MARGIN = 1, FUN = sd)
   #      )
   mu_nd =  apply(samps.j$mu_nd, MARGIN = 1:2, FUN = mean),
-  tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean)
+  tau_nd =  apply(samps.j$tau_nd, MARGIN = 1, FUN = mean),
+  mulocat = apply(samps.j$mulocat, MARGIN = 1, FUN = mean)
 )
 #    names(dimnames(conc_param$lenp)) <- c("Fish","Metaparam")
 #    names(dimnames(conc_param$timep)) <- c("Dummy","Metaparam")
@@ -183,15 +191,16 @@ conc_param <- list(
 conc_param <- melt(conc_param)
 colnames(conc_param)[colnames(conc_param)=="value"] <- "Result"
 colnames(conc_param)[colnames(conc_param)=="L1"] <- "Parameter"
-conc_param$Compound[conc_param$Parameter =="tau_nd"] <- conl_nd # drops out for some reason
-conc_param <- fillna(conc_param,"Fish")
+conc_param$Compound[conc_param$Parameter =="tau_nd"] <- conl_nd # drops out because one-dimensional
+conc_param$Area[conc_param$Parameter =="mulocat"] <- locl # drops out because one-dimensional
+conc_param <- fillna(conc_param,c("Fish","Area"))
 for(i in 1:ncol(conc_param)) {
   if("factor" %in% class(conc_param[[i]])) conc_param[[i]] <- as.character(conc_param[[i]])
 }
 conc_param <- Ovariable("conc_param",data=conc_param)
 
 objects.store(conc_param)
-cat("Ovariable conc_params stored.\n")
+cat("Ovariable conc_param stored.\n")
 
 ######################3
 
@@ -218,10 +227,14 @@ scatterplotMatrix(t(samps.j$Omega[2,,1,,1]), main = "Omega for several compounds
 scatterplotMatrix(t((samps.j$pred_nd[1,,,1])), main = paste("Predictions for several compounds for",
                                                             names(samps.j$pred_nd[,1,1,1])[1]))
 
+scatterplotMatrix(t((samps.j$mulocat[,,1])), main = paste("Predictions for location average difference",
+                                                            names(samps.j$pred_nd[,1,1,1])[1]))
+
 #plot(coda.samples(jags, 'Omega', N))
 plot(coda.samples(jags, 'mu', N*thin, thin))
 #plot(coda.samples(jags, 'lenp', N))
 #plot(coda.samples(jags, 'timep', N))
 plot(coda.samples(jags, 'pred', N*thin, thin))
 plot(coda.samples(jags, 'mu_nd', N*thin, thin))
+plot(coda.samples(jags, 'mulocat', N*thin, thin))
 tst <- (coda.samples(jags, 'pred', N))

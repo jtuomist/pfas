@@ -47,8 +47,9 @@ conc_poll <- Ovariable(
       con <- tmp$Compound[tmp$Parameter=="mu_nd"]
       mu <- tmp$conc_paramResult[tmp$Parameter=="mu_nd"]
       tau <- tmp$conc_paramResult[tmp$Parameter=="tau_nd"][match(con,tmp$Compound[tmp$Parameter=="tau_nd"])]
+      mulocat <- tmp$conc_paramResult[tmp$Parameter=="mulocat"]
       for(j in 1:length(con)) {
-        rnd <- exp(rnorm(1,mu[j],tau[j]))
+        rnd <- exp(rnorm(1 , mu[j] + mulocat , tau[j]))
         out <- rbind(out,
                      data.frame(tmp2[i,],Compound = con[j],Result = rnd)
                      )
@@ -71,3 +72,7 @@ conc_poll <- Ovariable(
 
 objects.store(conc_poll)
 cat("Ovariable conc_poll stored.\n")
+
+library(ggplot2)
+ggplot(conc_poll@output, aes(x=conc_pollResult, colour=Fish))+stat_ecdf()+
+  facet_wrap(~Compound, scales="free_x")+ scale_x_log10()
