@@ -211,6 +211,7 @@ ggplot(expo_indir@output[expo_indir$Exposcen=="BAU",],
   labs(title="Epäsuora altistuminen äidistä lapseen",
        y="Kumulatiivinen todennäköisyysjakauma",
        x="(DHA mg/d [ä]iti, TEQ pg/g rasva [l]apsi, PFAS ng/ml veri [l], MeHg ug/g hius [ä])")
+ggsave("Epäsuora altistuminen äidistä lapseen.svg")
 
 cat("Kalaperäisiä tautitaakkoja Suomessa\n")
 
@@ -278,7 +279,7 @@ ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male" , ],
     x="Kalassa oleva tekijä",
     y="Tautitaakka (DALY/a"
   )
-ggsave("Tautitaakka kalasta tekijöittäin pikkupojilla.svg")
+ggsave("Tautitaakka kalasta tekijöittäin pikkupojilla Suomessa.svg")
 
 tmp <- trim(BoDattr)
 ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male" & tmp$Area!="Helsinki" , ], 
@@ -289,6 +290,7 @@ ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male" & tmp$Area!="Helsinki" , ],
     x="Kalassa oleva tekijä",
     y="Tautitaakka (DALY/a"
   )
+ggsave("Tautitaakka kalasta tekijöittäin pikkupojilla.svg")
 
 ggplot(tmp, aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),4)])+
