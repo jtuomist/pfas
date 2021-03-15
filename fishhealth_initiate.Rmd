@@ -61,7 +61,7 @@ What has been done for PFAS assessment?
 44. All salmonids inherit the concentrations from Baltic salmon. Solution: Do nothing, wait for the grand Bayesian model. DONE
 45. Porvoo and Vanhankaupungilahti should not affect concentrations of fish from other areas. Add higher concentrations to conc using a decision. Add local fish to amount using Inpamount with dimensions Fish and Fishing (with BAU 0 g/d). Correct Fishing locations will be added with oapply. DONE.
 46. Fraction of zero PFAS exposure is too high (around 75 %). Should be close to 50 %. Solution: the fish species adjustment has to be moved from expo_dir to amount. DONE
-
+47. Separate ERFs for direct and indirect exposures. Solution: Add dimension Exposure to ERFchoice and check that it does not cause problems elsewhere. ERF_mehg was using ERFchoice to choose the right ERF but this was done in a different way. In addition, ERF was adjusted to simply delete columns Exposure and Exposure_unit from further calculations. DONE
 
 Should still be done:
 
@@ -135,6 +135,8 @@ amountOrig <- amount@formula
 amount@formula <- function(...) {
   out <- amountOrig()
   out$Fish[out$Fish %in% c("Imported fish","Fish product","Tuna")] <- "Average fish"
+  out$Group <- factor(out$Group,
+                     levels=c("Toddlers","Other children","Adolescents","Adults","Elderly"))
   out <- out * fish_proportion
   return(out)
 }

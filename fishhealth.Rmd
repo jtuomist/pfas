@@ -1,11 +1,11 @@
 ---
 title: "Fish and health in Finland and Porvoo: results with special focus on PFAS compounds"
 author: "Jouni Tuomisto"
-date: "07 03 2021"
+date: "2021-03-15"
 output: html_document
 params:
   N: 200
-  porvoo: FALSE
+  porvoo: TRUE
 ---
 ## Shortcut to model download
 
@@ -24,6 +24,12 @@ Fix these problems:
 8. NOTE! Salmon concentrations include farmed salmon at the moment. This is OK for health impact assessment. DONE
 9. Is amount / Group good for fillna? check. Solution: Yes, because Inpamount does not contain Group. DONE
 10. Is expo_locations still used? Yes. DONE 
+11. Kalansyönti väestössä: Group is not ordered correctly. DONE
+12. Yhdisteiden saanti kalasta: Too many averages. Are they gender-specific? Solution: match with Area. DONE
+13. Exposure to compounds: thin the Age on x axis. DONE
+14. BoDattr tables: orbind the summary row to each table. DONE
+15. Amount for Porvoo is too high. Why? Solution: Food causes multiplication, so clarify Inpamount. DONE
+16. Hg produces NA in some cases. Why? Solution: remove rows with NA. DONE
 
 
 ```{r setup, include=FALSE}
@@ -40,9 +46,24 @@ openv.setN(params$N)
 ```
 
 
-```{r modelrun}
+```{r load model}
+
+params
 
 objects.latest("Op_fi5932",code_name="initiate") # [[PFAS-yhdisteiden tautitaakka]]
+
+# Update decisions and collapses so that you don't need to initiate the whole model if you build new scenarios.
+dec <- opbase.data("Op_fi5932", subset="Decisions")[-1] 
+DecisionTableParser(dec)
+
+CTable <- opbase.data("Op_fi5932",subset="CollapseMarginals")
+if(!params$porvoo) CTable <- CTable[CTable$Variable!="expo_dir" | CTable$Function!="sample" , ]
+CollapseTableParser(CTable)
+CTable
+
+```
+
+```{r run model}
 
 conc_eukalat <- EvalOutput(conc_eukalat)
 BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
@@ -50,10 +71,11 @@ BoDattr <- EvalOutput(BoDattr, verbose=TRUE)
 ```
 
 ```{r summary tables}
-
+if(FALSE) {
 oprint(summary(amount,"mean"))
 oprint(summary(BoD,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoD,marginals=c("Gender","Response"),"mean"))
+summary(BoDattr)
 oprint(summary(BoDattr,marginals=c("Age","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Exposure_agent","Response"),"mean"))
 oprint(summary(BoDattr,marginals=c("Gender","Response"),"mean"))
@@ -70,7 +92,7 @@ oprint(summary(incidence,"mean"))
 oprint(summary(PAF,"mean"))
 oprint(summary(population,"mean"))
 oprint(summary(RR,"mean"))
-
+}
 
 ```
 
@@ -78,30 +100,30 @@ oprint(summary(RR,"mean"))
 ```{r plots}
 ###################
 # Graphs
-tmp <- trim(amount)
-tmp <- tmp[tmp$Area!="Helsinki",]
-tmp$Group <- factor(tmp$Group, levels=c("Infants","Toddlers","Other children","Adolescents",
+amount$Group <- factor(amount$Group, levels=c("Infants","Toddlers","Other children","Adolescents",
                                         "Adults", "Elderly"))
 
-if(params$porvoo) {
-  p <- ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
-    coord_flip()+ facet_grid(Area ~ Gender)+
-    labs(
-      title="Kalansyönti Suomessa ja Porvoon vapaa-ajankalastajilla ikäryhmittäin",
-      y="Syönti (g/d)"
-    )
-  print(p)
-  ggsave("Kalansyönti Suomessa ja Porvoossa ikäryhmittäin.svg")
-} else {
-  p <- ggplot(tmp[tmp$Area=="Finland",], aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
-    coord_flip()+ facet_grid(Gender ~ .)+
-    labs(
-      title="Kalansyönti Suomessa ikäryhmittäin ja sukupuolittain",
-      y="Syönti (g/d)"
-    )
-  print(p)
-  ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
-}
+tmp <- trim(amount)
+tmp <- tmp[tmp$Area!="Helsinki",]
+
+p <- ggplot(tmp, aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  coord_flip()+ facet_grid(Area ~ Gender)+
+  labs(
+    title="Kalansyönti Suomessa ja Porvoon vapaa-ajankalastajilla ikäryhmittäin",
+    y="Syönti (g/d)"
+  )
+print(p)
+ggsave("Kalansyönti Suomessa ja Porvoossa ikäryhmittäin.svg")
+
+p <- ggplot(tmp[tmp$Area=="Finland",], aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+  coord_flip()+ facet_grid(Gender ~ .)+
+  labs(
+    title="Kalansyönti Suomessa ikäryhmittäin ja sukupuolittain",
+    y="Syönti (g/d)"
+  )
+print(p)
+ggsave("Kalansyönti Suomessa ikäryhmittäin.svg")
+
 
 tmp <- oapply(amount[amount$Area!="Helsinki",],NULL,sum,"Fish")@output
 p <- ggplot(tmp, aes(x=amountResult+1, colour=Group))+stat_ecdf()+
@@ -127,9 +149,9 @@ ggplot(conc@output[conc$Compound %in% c("PFAS","PFOS"),], aes(x=concResult, colo
 #  stat_ecdf(data=conc_eukalat@output, aes(x=conc_eukalatResult))+
   scale_linetype_manual(values=c("dotted","twodash","solid"))+
   labs(
-    title="PFAS concentration in fish in Finland",
-    x="PFAS concentration (ng/g fresh weight)",
-    y="Cumulative probability"
+    title="PFAS-pitoisuudet kalassa Suomessa",
+    x="PFAS-pitoisuus (ng/g tuorepainoa)",
+    y="Kumulatiivinen todennäköisyys"
   )
 # The code may produce some negative values, which are removed from the graph
 ggsave("PFAS-pitoisuus kalassa Suomessa.svg")
@@ -144,40 +166,51 @@ limits <- data.frame(
 )
 
 tmp <- EvalOutput(expo_dir, verbose=TRUE) # Calculated again because we want Group, which is collapsed
-tmp <- oapply(tmp,NULL,sum,c("Fish","fish_proportionSource","amountSource","concSource"))
-tmp <- oapply(tmp,NULL,mean,"Scaling")
-tmp <- tmp[tmp$Exposcen=="BAU" & !tmp$Exposure_agent %in% c("ALA", "EPA") ,]
+tmp <- oapply(tmp,NULL,sum, c("Fish","fish_proportionSource","amountSource","concSource"))
+tmp <- oapply(tmp,NULL,mean,"Scaling") # Not all scales are available for all Exposure agents, but all are identical
+tmp <- tmp[tmp$Exposcen=="BAU" & !tmp$Exposure_agent %in% c("ALA", "EPA") , ]
 tmp$Group <- factor(tmp$Group, levels=c("Toddlers","Other children","Adolescents","Adults","Elderly"))
-if(params$porvoo) {
-  tmp <- tmp[tmp$Exposure_agent=="PFAS",] 
-  limits <- limits[limits$Exposure_agent=="PFAS",]
-  titl <- "PFAS-yhdisteiden saanti kalasta eri ryhmissä"
-} else titl <- "Yhdisteiden saanti kalasta"
-p <- ggplot(tmp@output[tmp$Area=="Finland",], aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
-  scale_x_log10()+
-  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
-  geom_point(data = oapply(tmp,c("Group","Exposure_agent","Area"),mean)@output,
+
+tmp2 <- tmp[tmp$Exposure_agent=="PFAS",] 
+limits2 <- limits[limits$Exposure_agent=="PFAS",]
+ggplot(tmp2@output, aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
+  scale_x_log10()+ facet_grid(Area ~ .)+
+  geom_vline(data=limits2, aes(xintercept=Result, linetype=Type))+
+  geom_point(data = oapply(tmp2,c("Group","Exposure_agent","Area"),mean)@output,
              aes(x=expo_dirResult, y=0.1), shape=1, size=3, stroke=2)+
-  labs(title=titl,
+  labs(title="PFAS-yhdisteiden saanti kalasta eri ryhmissä",
        x="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
        y="kumulatiivinen todennäköisyys")
-if(params$porvoo) {
-  p <- p + facet_grid(Area ~ .)
-  print(p)
-  ggsave("PFAS-yhdisteiden saanti kalasta Suomessa ja Porvoossa.svg")
-} else {
-  p <- p + facet_wrap(~Exposure_agent, scales="free_x")
-  print(p)
-  ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
-}
 
-ggplot(trim(tmp[tmp$Area=="Finland",]), 
+ggsave("PFAS-yhdisteiden saanti kalasta Suomessa ja Porvoossa.svg")
+
+tmp <- tmp[tmp$Area=="Finland",]
+ggplot(tmp@output, aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
+  scale_x_log10() + facet_wrap(~Exposure_agent, scales="free_x")+
+  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
+  geom_point(data = oapply(tmp,c("Group","Exposure_agent"),mean)@output,
+             aes(x=expo_dirResult, y=0.1), shape=1, size=3, stroke=2)+
+  labs(title="Yhdisteiden saanti kalasta",
+       x="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
+       y="kumulatiivinen todennäköisyys")
+
+ggsave("Yhdisteiden saanti kalasta Suomessa.svg")
+
+ggplot(trim(tmp), 
        aes(x=Age, weight=expo_dirResult, fill=Gender))+geom_bar(position="dodge")+
   facet_wrap(~Exposure_agent, scales="free_y")+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),4)])+
   labs(
-    title="Exposure to compounds",
-    y="(omega: mg/d; vit D: ug/d, PFAS: ng/d)"
+    title="Suora altistuminen yhdisteille",
+    y="(omega mg/d. vit D ug/d. PFAS ng/d)"
   )
+
+ggplot(expo_indir@output[expo_indir$Exposcen=="BAU",],
+       aes(x=expo_indirResult+0.03,color=Area,linetype=Age))+
+  stat_ecdf()+scale_x_log10()+facet_wrap(~Exposure_agent)+
+  labs(title="Epäsuora altistuminen äidistä lapseen",
+       y="Kumulatiivinen todennäköisyysjakauma",
+       x="(DHA mg/d [ä]iti, TEQ pg/g rasva [l]apsi, PFAS ng/ml veri [l], MeHg ug/g hius [ä])")
 
 cat("Kalaperäisiä tautitaakkoja Suomessa\n")
 
@@ -196,36 +229,37 @@ if(openv$N>1) {
 
   oprint(tmp)
   
-  tmp <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Response")))
-  tmp <- data.frame(
-    Altiste = tmp$Exposure_agent,
-    Alue = tmp$Area,
-    Keskiarvo = as.character(signif(tmp$mean,2)),
-    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
-    Keskihajonta = signif(tmp$sd,2)
-  )#[rev(match(lev, tmp$Exposure_agent)),]
-
-  oprint(tmp)
-  
-  tmp <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Exposure_agent")))
-  tmp <- data.frame(
-    Terveysvaikutus = tmp$Response,
-    Alue = tmp$Area,
-    Keskiarvo = signif(tmp$mean,2),
-    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
-    Keskihajonta = signif(tmp$sd,2)
-  )
-  oprint(tmp)
-
   tmp2 <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Exposure_agent","Response")))
   tmp2 <- data.frame(
-    Terveysvaikutus = "Yhteensä",
     Alue = tmp2$Area,
     Keskiarvo = signif(tmp2$mean,2),
     "95 luottamusväli" = paste0(signif(tmp2$Q0.025,2)," - ", signif(tmp2$Q0.975,2)),
     Keskihajonta = signif(tmp2$sd,2)
   )
-  oprint(tmp2)
+
+  tmp <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Response")))
+  tmp <- orbind(data.frame(
+    Altiste = tmp$Exposure_agent,
+    Alue = tmp$Area,
+    Keskiarvo = as.character(signif(tmp$mean,2)),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  ),
+  data.frame(Altiste="Yhteensä", tmp2))
+
+  oprint(tmp)
+  
+  tmp <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Exposure_agent")))
+  tmp <- orbind(data.frame(
+    Terveysvaikutus = tmp$Response,
+    Alue = tmp$Area,
+    Keskiarvo = signif(tmp$mean,2),
+    "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
+    Keskihajonta = signif(tmp$sd,2)
+  ),
+  data.frame(Terveysvaikutus="Yhteensä", tmp2))
+
+  oprint(tmp)
 }
 
 tmp <- trim(BoDattr[BoDattr$Area=="Finland",])
@@ -237,7 +271,7 @@ ggplot(tmp, aes(x=Exposure_agent, weight=BoDattrResult, fill=Response),colour="b
   )
 ggsave("Tautitaakka kalasta tekijöittäin.svg")
 
-ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male",], 
+ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male" , ], 
        aes(x=Exposure_agent, weight=BoDattrResult, fill=Response),color="black")+geom_bar()+
   labs(
     title="Tautitaakka kalasta tekijöittäin pikkupojilla",
@@ -246,8 +280,18 @@ ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male",],
   )
 ggsave("Tautitaakka kalasta tekijöittäin pikkupojilla.svg")
 
+tmp <- trim(BoDattr)
+ggplot(tmp[tmp$Age=="0 - 4" & tmp$Gender=="Male" & tmp$Area!="Helsinki" , ], 
+       aes(x=Exposure_agent, weight=BoDattrResult, fill=Response),color="black")+geom_bar()+
+  facet_wrap(~ Area)+
+  labs(
+    title="Tautitaakka kalasta tekijöittäin pikkupojilla",
+    x="Kalassa oleva tekijä",
+    y="Tautitaakka (DALY/a"
+  )
+
 ggplot(tmp, aes(x=Age, weight=BoDattrResult, fill=Response))+geom_bar(position="stack")+
-  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),4)])+
   labs(
     title="Tautitaakka kalassa olevista tekijöistä",
     x="Ikäryhmä",
@@ -258,7 +302,7 @@ ggsave("Tautitaakka kalassa olevista tekijöistä.svg")
 tmp <- BoDattr / population * 1000
 
 p <- ggplot(trim(tmp[tmp$Area!="Helsinki",]), aes(x=Age, weight=Result, fill=Response))+geom_bar(position="stack")+
-  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),3)])+
+  scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),4)])+
   labs(
     title="Tautitaakka kalassa olevista tekijöistä per henkilö",
     x="Ikäryhmä",
