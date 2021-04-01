@@ -41,7 +41,7 @@ These issues are to be fixed:
 22. Kuva 4 syönti: suomi vs Porvoo, ei sukupuolia. suomenna DONE
 23. Kuva 5 PFAS-altistus Suomi, Helsinki, Porvoo DONE
 24. Kuva 6 kaikkien aineiden altistus. Lisää kalan syöntisuositus. Kuva 4*2, korkeampi. suomenna DONE
-25. Suomenna kaikki kuvat ja taulukot.
+25. Suomenna kaikki kuvat ja taulukot. DONE
 
 
 ```{r setup, include=FALSE}
@@ -51,6 +51,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(OpasnetUtils) # Install the newest version from https://github.com/jtuomist/OpasnetUtils not from CRAN.
 library(tidyverse)
+library(thlGraphs)
 library(plotly)
 library(readxl)
 library(reshape2)
@@ -58,6 +59,108 @@ library(ggVennDiagram)
 library(ggforce)
 
 openv.setN(params$N)
+
+lang <- data.frame(
+  en=c(
+  "Fish",
+  "Average fish",
+  "Bream",
+  "Flounder",
+  "Herring",
+  "Perch",
+  "Roach",
+  "Salmon",
+  "Whitefish",
+  "Group",
+  "Toddlers",
+  "Other children",
+  "Adolescents",
+  "Adults",
+  "Elderly",
+  "Area",
+  "Finland",
+  "Porvoo",
+  "Exposure_agent",
+  "DHA",
+  "MeHg",
+  "Omega3",
+  "PFAS",
+  "TEQ",
+  "Vitamin D",
+  "Type",
+  "RDI",
+  "TDI",
+  "Response",
+  "All-cause mortality",
+  "CHD2 mortality",
+  "Loss in child's IQ points",
+  "Depression",
+  "Vitamin D recommendation",
+  "Breast cancer",
+  "Immunosuppression",
+  "Yes or no dental defect",
+  "Sperm concentration",
+  "Cancer morbidity yearly",
+  "Age"
+),
+fi=c(
+  "Kala",
+  "Keskiarvokala",
+  "Lahna",
+  "Kampela",
+  "Silakka",
+  "Ahven",
+  "Särki",
+  "Lohi",
+  "Siika",
+  "Ryhmä",
+  "Taapero",
+  "Lapsi",
+  "Nuori",
+  "Aikuinen",
+  "Ikääntynyt",
+  "Alue",
+  "Suomi",
+  "Porvoo",
+  "Altiste",
+  "DHA",
+  "Metyylielohopea",
+  "Omega-3",
+  "PFAS",
+  "Dioksiini",
+  "D-vitamiini",
+  "Päiväsaanti",
+  "Suositeltu",
+  "Siedettävä",
+  "Vaikutus",
+  "Kokonaiskuolleisuus",
+  "Sydänkuolleisuus",
+  "Älykkyysosamäärä",
+  "Masennus",
+  "D-vitamiinisuositus",
+  "Rintasyöpä",
+  "Vastustuskyky",
+  "Hammasvaurio",
+  "Hedelmättömyys",
+  "Syöpäsairastuvuus",
+  "Ikä"
+))
+la <- function(x) {
+  rp <- function(txt) {
+      tst <- match(txt, lang$en)
+      txt <- ifelse(is.na(tst),txt,lang$fi[tst])
+      return(txt)
+  }
+  if("ovariable" %in% class(x)) out <- x@output else out <- x
+
+  colnames(out) <- rp(colnames(out))
+  for(i in 1:ncol(out)) {
+    if(is.factor(out[[i]])) levels(out[[i]]) <- rp(levels(out[[i]]))
+    if(is.character(out[[i]])) out[[i]] <- rp(out[[i]])
+  }
+  if("ovariable" %in% class(x)) x@output <- out else x <- out
+  return(x)
+}
 
 ```
 
@@ -120,18 +223,20 @@ amount$Group <- factor(amount$Group, levels=c("Infants","Toddlers","Other childr
                                         "Adults", "Elderly"))
 
 tmp <- oapply(amount,NULL,mean,"Gender")
-tmp <- tmp[tmp$Area!="Helsinki",]
+tmp <- la(tmp[tmp$Area!="Helsinki",])
 
-p <- ggplot(trim(tmp), aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
-  coord_flip()+ facet_grid(Area ~ .)+
+p <- ggplot(trim(tmp), aes(x=Ryhmä, weight=amountResult, fill=Kala))+geom_bar()+
+  coord_flip()+ facet_grid(Alue ~ .)+
+  thlTheme()+
   labs(
-    title="Kalansyönti Suomessa ja Porvoon vapaa-ajankalastajilla ikäryhmittäin",
-    y="Syönti (g/d)"
+    title="Kalansyönti Suomessa ja Porvoon
+    vapaa-ajankalastajilla ikäryhmittäin",
+    subtitle="Syönti (g/d)"
   )
 print(p)
 ggsave("Kalansyönti Suomessa ja Porvoossa ikäryhmittäin.svg")
 
-p <- ggplot(tmp[tmp$Area=="Finland",], aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
+p <- ggplot(trim(amount[amount$Area=="Finland",]), aes(x=Group, weight=amountResult, fill=Fish))+geom_bar()+
   coord_flip()+ facet_grid(Gender ~ .)+
   labs(
     title="Kalansyönti Suomessa ikäryhmittäin ja sukupuolittain",
@@ -189,26 +294,30 @@ tmp$Group <- factor(tmp$Group, levels=c("Toddlers","Other children","Adolescents
 
 tmp2 <- tmp[tmp$Exposure_agent=="PFAS",] 
 limits2 <- limits[limits$Exposure_agent=="PFAS",]
-ggplot(tmp2@output, aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
-  scale_x_log10()+ facet_grid(Area ~ .)+
-  geom_vline(data=limits2, aes(xintercept=Result, linetype=Type))+
-  geom_point(data = oapply(tmp2,c("Group","Exposure_agent","Area"),mean)@output,
+ggplot(la(tmp2@output), aes(x=expo_dirResult+0.5, colour=Ryhmä))+stat_ecdf()+
+  scale_x_log10()+ facet_grid(Alue ~ .)+
+  geom_vline(data=la(limits2), aes(xintercept=Result, linetype=Päiväsaanti))+
+  geom_point(data = la(oapply(tmp2,c("Group","Exposure_agent","Area"),mean)@output),
              aes(x=expo_dirResult, y=0.1), shape=1, size=3, stroke=2)+
-  labs(title="PFAS-yhdisteiden saanti kalasta eri ryhmissä",
-       x="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
-       y="kumulatiivinen todennäköisyys")
+  thlTheme(legend.position = "right")+
+  labs(title="PFAS-yhdisteiden saanti kalasta
+       eri ryhmissä",
+       subtitle="Suora altistuminen päivässä (ng/pvä)",
+       y="todennäköisyys"
+  )
 
 ggsave("PFAS-yhdisteiden saanti kalasta Suomessa ja Porvoossa.svg")
 
 tmp <- tmp[tmp$Area=="Finland",]
-ggplot(tmp@output, aes(x=expo_dirResult+0.5, colour=Group))+stat_ecdf()+
-  scale_x_log10() + facet_wrap(~Exposure_agent, scales="free_x", ncol=2)+
-  geom_vline(data=limits, aes(xintercept=Result, linetype=Type))+
-  geom_point(data = oapply(tmp,c("Group","Exposure_agent"),mean)@output,
+ggplot(la(tmp@output), aes(x=expo_dirResult+0.5, colour=Ryhmä))+stat_ecdf()+
+  scale_x_log10() + facet_wrap(~Altiste, scales="free_x", ncol=2)+
+  geom_vline(data=la(limits), aes(xintercept=Result, linetype=Päiväsaanti))+
+  geom_point(data = la(oapply(tmp,c("Group","Exposure_agent"),mean)@output),
              aes(x=expo_dirResult, y=0.1), shape=1, size=3, stroke=2)+
+  thlTheme(legend.position = "right")+
   labs(title="Yhdisteiden saanti kalasta",
-       x="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
-       y="kumulatiivinen todennäköisyys")
+       subset="Suora altistuminen päivässä (kala: g, rasvahapot: mg, D-vit: ug, PFAS: ng, TEQ: pg)",
+       y="todennäköisyys")
 
 ggsave("Yhdisteiden saanti kalasta Suomessa.svg", width=7, height=10)
 
@@ -258,14 +367,14 @@ if(openv$N>1) {
   tmp <- orbind(data.frame(
     Altiste = tmp$Exposure_agent,
     Vaste = tmp$Response,
-    Alue = tmp$Area,
+#    Alue = tmp$Area,
     Keskiarvo = as.character(signif(tmp$mean,2)),
     "95 luottamusväli" = paste0(signif(tmp$Q0.025,2)," - ", signif(tmp$Q0.975,2)),
     Keskihajonta = signif(tmp$sd,2)
   ),
-  data.frame(Altiste="Yhteensä", tmp2))
+  data.frame(Altiste="Yhteensä", tmp2[-6])) # remove Alue
 
-  oprint(tmp)
+  oprint(la(tmp))
   
   tmp <- summary(oapply(BoDattr[BoDattr$Area=="Finland",],NULL,sum,c("Age","Gender","Response")))
   tmp <- orbind(data.frame(
@@ -289,7 +398,7 @@ if(openv$N>1) {
   ),
   data.frame(Terveysvaikutus="Yhteensä", tmp2))
 
-  oprint(tmp)
+  oprint((tmp))
 }
 
 tmp <- trim(BoDattr[BoDattr$Area=="Finland",])
@@ -301,14 +410,16 @@ ggplot(tmp, aes(x=Exposure_agent, weight=BoDattrResult, fill=Response),colour="b
   )
 ggsave("Tautitaakka kalasta tekijöittäin.svg")
 
-tmp <- trim(oapply(BoDattr,c("Area","Age","Iter"),sum))
-tmp <- tmp[tmp$Area=="Finland",]
-ggplot(tmp, aes(x=Age, y=-BoDattrResult, group=Area))+geom_line(colour="blue")+
+tmp2 <- trim(oapply(BoDattr,c("Area","Age","Iter"),sum))
+tmp2 <- tmp2[tmp2$Area=="Finland",]
+ggplot(tmp2, aes(x=Age, y=-BoDattrResult, group=Area))+geom_line(size=2,colour="#48c232")+
   scale_x_discrete(breaks = levels(ages)[seq(1,length(ages),4)])+
+  thlTheme()+
   labs(
     title="Terveyshyöty kalasta ikäryhmittäin",
     x="Ikäryhmä",
-    y="Terveystyöty (-DALY/a)"
+    subtitle="Terveystyöty (-DALY/a)",
+    y=""
   )
 ggsave("Terveyshyöty kalasta ikäryhmittäin.svg")
 
@@ -345,14 +456,28 @@ tmp <- trim(oapply(BoDattr[BoDattr$Area=="Finland",],c("Response","Exposure_agen
 tmp$r <- sqrt(abs(tmp$BoDattrResult))
 tmp$x0 <- c(-100, 100, 100, 100, 100,-200,-500,-100,-250,-100, 100)
 tmp$y0 <- c(-180,-120, -60,   0,  60, 170, 100,  50,-100, 250, 120)
-ggplot(tmp, aes(x0=x0, y0=y0, r=r, fill=Exposure_agent))+geom_circle(aes(color=Exposure_agent))+
-  geom_text(aes(x=x0, y=y0, label=Response), hjust=-0.1)+
+tmp <- rbind(tmp,data.frame(
+  Response = c("Hyödyt","Haitat"),
+  Exposure_agent= c("TEQ","TEQ"),
+  BoDattrResult=c(0,0),
+  r=c(0,0),
+  x0=c(-250,100),
+  y0=c(350,350)
+))
+ggplot(la(tmp), aes(x0=x0, y0=y0, r=r, fill=Altiste))+geom_circle(aes(color=Altiste))+
+  geom_text(aes(x=x0, y=y0, label=Vaikutus), hjust=-0.1)+
   coord_cartesian(xlim=c(-750, 400))+
-  theme(
+  thlTheme(
     legend.position ="bottom",
+    show.grid.y=FALSE)+
+  theme(
     axis.title=element_blank(),
     axis.text=element_blank(),
-    axis.ticks=element_blank())
+    axis.ticks=element_blank())+
+  labs(
+    title="Tautitaakka kalan eri tekijöistä",
+    y=""
+  )
 
 ggsave("Suomen tautitaakka kalasta pallokuviona.svg", height=5, width = 9)
 
@@ -370,11 +495,24 @@ p <- ggplot(trim(tmp[tmp$Area!="Helsinki",]), aes(x=Age, weight=Result, fill=Res
   
   ggplot(trim(PAF), aes(x=PAFResult, colour=Response))+stat_ecdf()
 
+
 tmp <- expo_dir + Ovariable("limits", data=limits)
 tmp <- tmp[!(tmp$Exposure_agent=="TEQ"&tmp$Scaling=="BW") & tmp$Exposcen=="BAU",]
 tmp <- tmp[tmp$Area=="Finland",]
 tmp$tst <- paste(tmp$Iter, tmp$Gender, tmp$Age)
+#tst <- CollapseMarginal(tmp,"Age",fun="sample",
+#  probs=list(Age=result(oapply(population[population$Age!="Undefined",],"Age",sum))))
 
+# This Venn diagram produced the following numbers for the different subgroups
+# no-RDI, no-TWI: 4184
+# RDI only: 99
+# TDI only: 1666
+# Both RDI+TDI: 1251
+# Total: 7200 (200 iterations, 2 Genders, 18 ages) # Actually Age should be collapsed, weighted by population. 
+# Not critical in Finland because so similar age group sizes. Besides reduces number of observations,
+# and should be rerun with more iterations.
+# the ovariable has 36000 rows: (in addition 5 Exposure_agents)
+if(FALSE) {
 ggVennDiagram(list(
   All = tmp$tst[tmp$Exposure_agent=="TEQ"],
 #  MeHg = tmp$tst[tmp$Exposure_agent=="MeHg" & tmp$expo_dirResult > tmp$limitsResult],
@@ -384,9 +522,7 @@ ggVennDiagram(list(
   RDI = tmp$tst[tmp$Type=="RDI" & tmp$expo_dirResult > tmp$limitsResult],
   TDI = tmp$tst[tmp$Type=="TDI" & tmp$expo_dirResult > tmp$limitsResult]
 ))
-
-ggsave("Venn_raja_arvoylitykset_kala_altistumisessa.svg")
-
+}
 ################ Insight network
 #gr <- scrape(type="assessment")
 #objects.latest("Op_en3861", "makeGraph") # [[Insight network]]
@@ -398,6 +534,62 @@ ggsave("Venn_raja_arvoylitykset_kala_altistumisessa.svg")
 #print(showLoctable())
 #print(showind())
 
+# Self-made Venn diagram
+# Take two circles: 
+# first is the unit circle x^2 + y^2 = 1
+# second circle has centre at x-axis: (x-a)^2 + y^2 = r^2, r <= 1, 0 <= a <= r+1
+# In other words, the other circle is never bigger and left to the first circle.
+# This leads to a situation where the intercept always starts from (a-r,0) and goes to (min(1,a+r),0).
+
+# Solve for the upper intercept point by replacing y^2:
+# x^2 - 2ax + a^2 + (1 - x^2) = r^2
+# x = (a^2 + 1 - r^2) / 2a
+
+intercept <- function(a, r) {
+  x <- (a^2 + 1 - r^2) / (2*a)
+  y <- sqrt(1 - x^2)
+  cat("intercept",x,y,"\n")
+  return(c(x,y))
+}
+
+# Area of a segment of the unit circle integral sqrt(1 - x^2) dx = 1/2(sqrt(1-x^2)x+sin^-1(x))
+
+# Area of segment of the other circle y = sqrt(r^2 - (x-a)^2)
+# 1/2*((x-a)*sqrt(-a^2 + 2*a*x + r^2 - x^2) + r^2 * atan((x-a)/sqrt(r^2 - (a-x)^2)))
+
+area <- function(a0, r0) {
+
+  integ <- function(x, a, r) {
+    out <- 1/2*((x-a)*sqrt(max(0,-a^2 + 2*a*x + r^2 - x^2)) + r^2 * atan((x-a)/sqrt(r^2 - (a-x)^2)))
+    cat("integ",out,"\n")
+    return(out)
+  }
+  A1 <- integ(intercept(a0,r0)[1], a0, r0) - integ(a0-r0, a0, r0) # left segment by the second circle
+  A2 <- integ(min(1,a0+r0), 0, 1) - integ(intercept(a0,r0)[1], 0, 1) # right segment by the unit circle
+  return(2*(A2 + A1)/pi) # returns the intercept area relative to unit circle
+}
+area(0.38,sqrt(1251/(1251+1666)))
+1251/(1251+1666)
+df <- data.frame(
+  x0=c(0,0.384,0.1),
+  r=sqrt(c(1,(1251+99)/(1251+1666),(99+1251+1666+4184)/(1251+1666))),
+  y0=c(0,0,0),
+  Ryhmä=c("TDI ylittyy","RDI saavutetaan","Koko väestö")
+)
+ggplot(data=df, aes(x0=x0, y0=y0,r=r, fill=Ryhmä))+geom_circle(alpha=0.3)+
+  theme(
+    axis.title=element_blank(),
+    axis.text=element_blank(),
+    axis.ticks=element_blank())+
+  thlTheme(
+    legend.position ="bottom",
+    show.grid.y = FALSE)+
+  labs(
+    title="Suomalaisten sijoittuminen päiväsaantien suhteen",
+    y=""
+  )
+
+ggsave("Venn_raja_arvoylitykset_kala_altistumisessa.svg", width=7, height=6)
 
 ```
 
